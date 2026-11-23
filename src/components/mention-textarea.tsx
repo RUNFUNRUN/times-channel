@@ -8,6 +8,7 @@ import {
   PopoverContent,
 } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
+import { useRealtimeInterval } from '@/hooks/use-realtime';
 import { client, type Members, readResponse } from '@/lib/api-client';
 import {
   displayMentions,
@@ -35,11 +36,12 @@ export const MentionTextarea = ({
   onKeyDown,
   ...props
 }: Props) => {
+  const refetchInterval = useRealtimeInterval(30000);
   const members = useQuery({
     queryKey: ['members'],
     queryFn: async () => readResponse<Members>(await client.api.members.$get()),
     staleTime: 30000,
-    refetchInterval: 30000,
+    refetchInterval,
   });
   const input = useRef<HTMLTextAreaElement>(null);
   const id = useId();

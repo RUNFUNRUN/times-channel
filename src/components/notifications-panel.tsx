@@ -19,6 +19,7 @@ import { useState } from 'react';
 import { UserAvatar } from '@/components/message-item';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useRealtimeInterval } from '@/hooks/use-realtime';
 import {
   type ApiResponse,
   client,
@@ -35,6 +36,7 @@ export const NotificationsPanel = ({
   unreadCount: number;
   onOpen: (item: NotificationItem) => void;
 }) => {
+  const refetchInterval = useRealtimeInterval();
   const [unreadOnly, setUnreadOnly] = useState(false);
   const queryClient = useQueryClient();
   const notifications = useInfiniteQuery({
@@ -47,7 +49,7 @@ export const NotificationsPanel = ({
         }),
       ),
     getNextPageParam: (page) => page.nextCursor ?? undefined,
-    refetchInterval: 10000,
+    refetchInterval,
   });
   const action = useMutation({
     mutationFn: async (request: () => Promise<ApiResponse>) =>

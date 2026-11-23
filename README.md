@@ -11,7 +11,7 @@ Slack 風の社内 times アプリ。単一ワークスペースで、全員が�
 - `@` 入力でユーザー候補を表示。表示名・メールアドレスで絞り込み、クリック／Enter／Tab で選択。投稿の編集・スレッド・ファイル添付でも使用可能。
 - 通知タブにメンション・自分の投稿への返信・リアクションを表示。未読件数、未読絞り込み、個別／一括既読、未読に戻す操作に対応。通知を開くと対象の投稿をスレッド内で強調表示。
 - スレッドの返信・メンション先の名前を含む部分一致検索、個人用の「後で読む」。
-- 50件単位のページング。投稿・返信・通知は約10秒ごとに取得。未表示タブではポーリングを停止。
+- 50件単位のページング。投稿・返信・リアクション・通知・チャンネル変更を WebSocket で即時反映。接続中は1分ごとにも照合し、切断時は再接続しながら10秒更新に戻ります。未表示タブでは定期取得を停止。
 - チャンネル／スレッド／ユーザー単位の下書きをブラウザーに保存。Enter 改行、Shift + Enter 送信、日本語 IME 対応。
 - ライト／ダーク／システム連動と6色のテーマ。右上のパレットから変更し、同じブラウザーに保存。明暗・システム連動・初期表示のちらつき防止は shadcn の公式構成に従って next-themes を使用。
 - 投稿・スレッドへの画像／ファイル添付。実体は非公開の Cloudflare R2、メタデータは D1。画像プレビュー、拡大表示、ダウンロード。
@@ -28,17 +28,20 @@ DM、メール送信、WebSocket、複数ワークスペースは初期版の対
 [参考記事](https://www.runfunrun.dev/posts/next-stack) と隣接する `next-stack` を参考に、現在の依存バージョンに合わせています。
 
 - Next.js 16 App Router / React 19 / TypeScript / Bun
-- OpenNext → Cloudflare Workers、Cloudflare D1 / R2
+- OpenNext → Cloudflare Workers、Cloudflare D1 / R2 / Durable Objects（SQLite 型、WebSocket Hibernation）
 - Hono RPC / Drizzle ORM / Better Auth / Zod
 - TanStack Query / next-themes / Tailwind CSS 4 / shadcn/ui（公式 registry、Radix ベース）
 
 ```text
+worker.ts              # OpenNext への転送、WebSocket の認証と接続、DO の export
 src/app/api/
   [[...hono]]/route.ts  # @hono/vercel で Next.js と接続
   _lib/
     app.ts             # サブルーターの組み立てと共通エラー処理
     middleware.ts      # セッション確認、送信元の確認
     types.ts           # Hono の共通コンテキスト
+    realtime.ts        # 保存成功後の変更通知
+    realtime-room.ts   # 接続管理と WebSocket 配信
   _routes/
     auth.ts            # Better Auth
     workspace.ts       # 初期チャンネルとワークスペース情報
@@ -75,6 +78,8 @@ bun run db:migrate
 bun dev
 ```
 
+`bun dev` は Next.js の開発サーバーなので、WebSocket 接続を使用せず10秒更新で動作します。WebSocket の動作確認には `bun run preview` を使用してください。
+
 開発画面: [http://localhost:3000](http://localhost:3000)。D1 の状態は `.wrangler/state` に保存され、dev と preview で共有します。R2 も同じ保存先でローカルエミュレーションされます。クラウドの D1／R2 作成はローカル開発には不要です。
 
 ```sh
@@ -96,9 +101,9 @@ Next.js をビルドして、workerd 上で [http://localhost:8787](http://local
 bun run test:integration
 ```
 
-認証、別ユーザーの編集・削除の拒否、times の名前・説明変更と権限・重複チェック、変更後の投稿保持、送信元確認、チャンネル名重複、投稿の検証、返信、検索記号のエスケープ、リアクションの冪等性、保存のユーザー分離、スター、ページング、削除の連鎖、ログアウト／再ログインを確認します。テーマ設定の読み込みも検証します。通知については受信者の分離、メンション候補と本文編集時の識別子保持、自己通知の抑制、重複防止、既読の保持、ページング、添付・削除との連動を確認します。R2 についてはファイルだけの投稿、複数ファイル、サイズ制限、未認証の拒否、画像の内容判定、ダウンロード、返信添付、投稿削除後の実オブジェクト削除まで確認します。
+認証、別ユーザーの編集・削除の拒否、times の名前・説明変更と権限・重複チェック、変更後の投稿保持、送信元確認、チャンネル名重複、投稿の検証、返信、検索記号のエスケープ、リアクションの冪等性、保存のユーザー分離、スター、ページング、削除の連鎖、ログアウト／再ログインを確認します。テーマ設定の読み込みも検証します。WebSocket は接続認証・送信元の確認・公開変更の配信・個人変更の分離・クライアントからの不正配信の拒否・ログアウトしたセッションの全接続切断を確認します。通知については受信者の分離、メンション候補と本文編集時の識別子保持、自己通知の抑制、重複防止、既読の保持、ページング、添付・削除との連動を確認します。R2 についてはファイルだけの投稿、複数ファイル、サイズ制限、未認証の拒否、画像の内容判定、ダウンロード、返信添付、投稿削除後の実オブジェクト削除まで確認します。
 
-テストは localhost / 127.0.0.1 のみを許可し、実行ごとのテスト用データをローカル D1 に作成して、終了時にそのデータだけを削除します。Wrangler の既定のローカル保存先を使用してください。dev を対象にする場合は `TEST_BASE_URL=http://localhost:3000 bun run test:integration` です。
+テストは localhost / 127.0.0.1 のみを許可し、実行ごとのテスト用データをローカル D1 に作成して、終了時にそのデータだけを削除します。Wrangler の既定のローカル保存先を使用してください。WebSocket の接続テストを含むため、統合テストは Cloudflare preview を対象に実行してください。
 
 ## Cloudflare へのデプロイ
 
@@ -125,3 +130,13 @@ bun run test:integration
 - 投稿削除時には返信の添付も削除します。D1 のバッチ内で削除対象キーを `file_cleanup` に残すため、R2 側の一時的なエラー時も次回のワークスペース取得時に削除を再試行します。
 
 R2 は添付の保存に使用します。OpenNext の R2 キャッシュ、画像最適化用 binding、Cache Components は使用していません。
+
+## リアルタイム更新と無料プラン
+
+[OpenNext の Custom Worker](https://opennext.js.org/cloudflare/howtos/custom-worker) と [Cloudflare の WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/) を使用します。単一ワークスペースに1つの Durable Object を割り当て、投稿本文やファイルは引き続き D1／R2 に保存します。WebSocket は変更の種類だけを通知し、認証済み API からデータを再取得します。個人の既読・ブックマーク・スター変更は本人の接続にだけ配信します。
+
+接続時にはログインセッションと Origin を検証します。ログアウト時は同じセッションの接続をすべて閉じ、期限切れの接続への変更配信も止めます。再接続時にはデータを取得し直します。待機中は Hibernation に入り、heartbeat はサーバー側の自動応答で処理します。
+
+[公式料金表](https://developers.cloudflare.com/durable-objects/platform/pricing/)では SQLite 型 Durable Objects は Workers Free に対応し、リクエスト10万回／日、実行時間13,000 GB秒／日の無料枠があります。`wrangler.jsonc` の `new_sqlite_classes` を使用しており、有料プランや追加の外部サービスは前提にしていません。Free プランの上限到達時は操作がエラーになり、自動的に有料プランへ移行しません。Workers・D1・R2 にもそれぞれ別の利用枠があるため、利用量にかかわらず無料になる保証はありません。
+
+Durable Object の設定は Wrangler のマイグレーションで、D1 の `drizzle/` とは別です。初回デプロイ時に Wrangler が作成するため、手動の Object 作成は不要です。`bun run cf-typegen` を実行すると追加 binding の型が生成されます。`next dev`／ビルド時に出る同一 Worker 内の DO binding 警告は、Node.js の開発用 proxy が DO 本体を実行しないことを示します。Cloudflare preview と本番ではカスタム Worker の DO を使用します。

@@ -62,6 +62,11 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import {
+  RealtimeContext,
+  useRealtime,
+  useRealtimeInterval,
+} from '@/hooks/use-realtime';
+import {
   type Channel,
   client,
   type MessagePage,
@@ -136,12 +141,13 @@ export const TimesApp = () => {
 };
 
 const WorkspaceApp = () => {
+  const connected = useRealtime();
   const queryClient = useQueryClient();
   const workspace = useQuery({
     queryKey: ['workspace'],
     queryFn: async () =>
       readResponse<Workspace>(await client.api.workspace.$get()),
-    refetchInterval: 30000,
+    refetchInterval: connected ? 60000 : 30000,
   });
   const notifications = useQuery({
     queryKey: ['notifications', 'count'],
@@ -149,7 +155,7 @@ const WorkspaceApp = () => {
       readResponse<{ unreadCount: number }>(
         await client.api.notifications['unread-count'].$get(),
       ),
-    refetchInterval: 10000,
+    refetchInterval: connected ? 60000 : 10000,
   });
   const unreadCount = notifications.data?.unreadCount ?? 0;
   const [threadFocusId, setThreadFocusId] = useState<string>();
@@ -418,281 +424,286 @@ const WorkspaceApp = () => {
   );
 
   return (
-    <div className='app-shell'>
-      <header className='topbar'>
-        <div className='topbar-brand'>
-          <Hash className='size-5' />
-          <span className='font-bold tracking-tight'>
-            times<span className='text-[#c3e8b6]'>.</span>
-          </span>
-        </div>
-        <form
-          className='global-search'
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (search.trim()) changeView({ kind: 'search', q: search.trim() });
-          }}
-        >
-          <Search className='size-4 shrink-0 opacity-65' />
-          <input
-            ref={searchInput}
-            aria-label='すべての投稿を検索'
-            placeholder='すべての投稿を検索'
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            maxLength={200}
-          />
-          <kbd>⌘ K</kbd>
-        </form>
-        <AppearanceDialog triggerClassName='ml-auto size-7 shrink-0 text-white/75 hover:bg-white/10 hover:text-white' />
-      </header>
-      <div className='app-body'>
-        <nav className='app-rail' aria-label='アプリ'>
-          <button
-            type='button'
-            className={cn(
-              'rail-item',
-              view.kind !== 'saved' &&
-                view.kind !== 'notifications' &&
-                'active',
-            )}
-            onClick={() => changeView({ kind: 'all' })}
-          >
-            <Home />
-            <span>ホーム</span>
-          </button>
-          <button
-            type='button'
-            className={cn(
-              'rail-item relative',
-              view.kind === 'notifications' && 'active',
-            )}
-            aria-label={unreadCount ? `通知 ${unreadCount}件の未読` : '通知'}
-            onClick={() => changeView({ kind: 'notifications' })}
-          >
-            <Bell />
-            <span>通知</span>
-            {unreadCount > 0 && (
-              <span className='absolute -right-2 -top-1 rounded-full bg-primary px-1.5 font-semibold text-primary-foreground'>
-                {unreadCount > 99 ? '99+' : unreadCount}
-              </span>
-            )}
-          </button>
-          <button
-            type='button'
-            className={cn('rail-item', view.kind === 'saved' && 'active')}
-            onClick={() => changeView({ kind: 'saved' })}
-          >
-            <Bookmark />
-            <span>後で読む</span>
-          </button>
-          <div className='mt-auto pb-4'>
-            <UserAvatar name={data.user.name} className='size-9' />
+    <RealtimeContext value={connected}>
+      <div className='app-shell'>
+        <header className='topbar'>
+          <div className='topbar-brand'>
+            <Hash className='size-5' />
+            <span className='font-bold tracking-tight'>
+              times<span className='text-[#c3e8b6]'>.</span>
+            </span>
           </div>
-        </nav>
-        <aside className='desktop-sidebar' aria-label='チャンネル一覧'>
-          {_sidebar}
-        </aside>
-        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <SheetContent
-            side='left'
-            className='w-[290px] border-0 bg-shell-sidebar p-0 text-white'
+          <form
+            className='global-search'
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (search.trim())
+                changeView({ kind: 'search', q: search.trim() });
+            }}
           >
-            <SheetTitle className='sr-only'>チャンネル一覧</SheetTitle>
-            <SheetDescription className='sr-only'>
-              表示するチャンネルを選択します。
-            </SheetDescription>
-            {_sidebar}
-          </SheetContent>
-        </Sheet>
-        <main className='workspace-main'>
-          <header className='channel-header'>
-            <Button
-              variant='ghost'
-              size='icon'
-              aria-label='チャンネル一覧を開く'
-              className='mobile-menu'
-              onClick={() => setSidebarOpen(true)}
+            <Search className='size-4 shrink-0 opacity-65' />
+            <input
+              ref={searchInput}
+              aria-label='すべての投稿を検索'
+              placeholder='すべての投稿を検索'
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              maxLength={200}
+            />
+            <kbd>⌘ K</kbd>
+          </form>
+          <AppearanceDialog triggerClassName='ml-auto size-7 shrink-0 text-white/75 hover:bg-white/10 hover:text-white' />
+        </header>
+        <div className='app-body'>
+          <nav className='app-rail' aria-label='アプリ'>
+            <button
+              type='button'
+              className={cn(
+                'rail-item',
+                view.kind !== 'saved' &&
+                  view.kind !== 'notifications' &&
+                  'active',
+              )}
+              onClick={() => changeView({ kind: 'all' })}
             >
-              <Menu />
-            </Button>
-            <div className='min-w-0 flex-1'>
-              <h2 className='flex items-center gap-2 truncate text-lg font-bold'>
-                {currentChannel ? (
-                  <Hash className='size-5 shrink-0 text-muted-foreground' />
-                ) : view.kind === 'notifications' ? (
-                  <Bell className='size-5 shrink-0 text-primary' />
-                ) : view.kind === 'saved' ? (
-                  <Bookmark className='size-5 shrink-0 text-primary' />
-                ) : view.kind === 'search' ? (
-                  <Search className='size-5 shrink-0 text-primary' />
-                ) : (
-                  <Home className='size-5 shrink-0 text-primary' />
-                )}
-                <span className='truncate'>{title}</span>
-              </h2>
-              <p className='mt-1 truncate text-xs text-muted-foreground'>
-                {currentChannel
-                  ? currentChannel.description
-                  : view.kind === 'notifications'
-                    ? 'メンション・返信・リアクション'
-                    : view.kind === 'saved'
-                      ? '保存した投稿は自分だけに表示されます。'
-                      : view.kind === 'search'
-                        ? 'すべてのチャンネルとスレッドから検索'
-                        : '全チャンネルの投稿'}
-              </p>
+              <Home />
+              <span>ホーム</span>
+            </button>
+            <button
+              type='button'
+              className={cn(
+                'rail-item relative',
+                view.kind === 'notifications' && 'active',
+              )}
+              aria-label={unreadCount ? `通知 ${unreadCount}件の未読` : '通知'}
+              onClick={() => changeView({ kind: 'notifications' })}
+            >
+              <Bell />
+              <span>通知</span>
+              {unreadCount > 0 && (
+                <span className='absolute -right-2 -top-1 rounded-full bg-primary px-1.5 font-semibold text-primary-foreground'>
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </button>
+            <button
+              type='button'
+              className={cn('rail-item', view.kind === 'saved' && 'active')}
+              onClick={() => changeView({ kind: 'saved' })}
+            >
+              <Bookmark />
+              <span>後で読む</span>
+            </button>
+            <div className='mt-auto pb-4'>
+              <UserAvatar name={data.user.name} className='size-9' />
             </div>
-            {currentChannel?.ownerId === data.user.id && (
+          </nav>
+          <aside className='desktop-sidebar' aria-label='チャンネル一覧'>
+            {_sidebar}
+          </aside>
+          <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+            <SheetContent
+              side='left'
+              className='w-[290px] border-0 bg-shell-sidebar p-0 text-white'
+            >
+              <SheetTitle className='sr-only'>チャンネル一覧</SheetTitle>
+              <SheetDescription className='sr-only'>
+                表示するチャンネルを選択します。
+              </SheetDescription>
+              {_sidebar}
+            </SheetContent>
+          </Sheet>
+          <main className='workspace-main'>
+            <header className='channel-header'>
               <Button
                 variant='ghost'
                 size='icon'
-                aria-label='チャンネルを編集'
-                title='チャンネルを編集'
-                onClick={() => setEditOpen(true)}
+                aria-label='チャンネル一覧を開く'
+                className='mobile-menu'
+                onClick={() => setSidebarOpen(true)}
               >
-                <Pencil className='size-4 text-muted-foreground' />
+                <Menu />
               </Button>
-            )}
-            {currentChannel && (
-              <Button
-                variant='ghost'
-                size='icon'
-                aria-label={
-                  currentChannel.starred ? 'スターを外す' : 'スターを付ける'
-                }
-                disabled={starPending}
-                onClick={() => {
-                  void favoriteChannel();
-                }}
-              >
-                <Star
-                  className={cn(
-                    'size-4 text-muted-foreground',
-                    currentChannel.starred && 'fill-[#dca94c] text-[#dca94c]',
+              <div className='min-w-0 flex-1'>
+                <h2 className='flex items-center gap-2 truncate text-lg font-bold'>
+                  {currentChannel ? (
+                    <Hash className='size-5 shrink-0 text-muted-foreground' />
+                  ) : view.kind === 'notifications' ? (
+                    <Bell className='size-5 shrink-0 text-primary' />
+                  ) : view.kind === 'saved' ? (
+                    <Bookmark className='size-5 shrink-0 text-primary' />
+                  ) : view.kind === 'search' ? (
+                    <Search className='size-5 shrink-0 text-primary' />
+                  ) : (
+                    <Home className='size-5 shrink-0 text-primary' />
                   )}
-                />
-              </Button>
-            )}
-            <Popover>
-              <PopoverTrigger asChild>
+                  <span className='truncate'>{title}</span>
+                </h2>
+                <p className='mt-1 truncate text-xs text-muted-foreground'>
+                  {currentChannel
+                    ? currentChannel.description
+                    : view.kind === 'notifications'
+                      ? 'メンション・返信・リアクション'
+                      : view.kind === 'saved'
+                        ? '保存した投稿は自分だけに表示されます。'
+                        : view.kind === 'search'
+                          ? 'すべてのチャンネルとスレッドから検索'
+                          : '全チャンネルの投稿'}
+                </p>
+              </div>
+              {currentChannel?.ownerId === data.user.id && (
                 <Button
                   variant='ghost'
-                  className='member-button gap-1.5'
-                  aria-label='ワークスペースの情報'
+                  size='icon'
+                  aria-label='チャンネルを編集'
+                  title='チャンネルを編集'
+                  onClick={() => setEditOpen(true)}
                 >
-                  <Users className='size-4' />
-                  <span>{data.memberCount}</span>
+                  <Pencil className='size-4 text-muted-foreground' />
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent align='end' className='space-y-3 text-sm'>
-                <h3 className='font-bold'>みんなの times</h3>
-                <p className='leading-6 text-muted-foreground'>
-                  {data.memberCount}{' '}
-                  人のメンバーが登録しています。すべてのチャンネルは、ワークスペースの全員に公開されます。
-                </p>
-                <p className='text-xs text-muted-foreground'>
-                  投稿は約10秒ごとに更新されます。
-                </p>
-              </PopoverContent>
-            </Popover>
-          </header>
-          <div className='channel-tabs'>
-            <span className='channel-tab'>
-              <MessageCircle className='size-3.5' />
-              {view.kind === 'notifications'
-                ? '通知'
-                : view.kind === 'saved'
-                  ? '保存した投稿'
-                  : view.kind === 'search'
-                    ? '検索結果'
-                    : 'メッセージ'}
-            </span>
-            {currentChannel?.ownerId === data.user.id && (
-              <span className='ml-auto flex items-center gap-1.5 text-xs text-muted-foreground'>
-                <Sparkles className='size-3.5 text-primary/70' />
-                あなたの times
+              )}
+              {currentChannel && (
+                <Button
+                  variant='ghost'
+                  size='icon'
+                  aria-label={
+                    currentChannel.starred ? 'スターを外す' : 'スターを付ける'
+                  }
+                  disabled={starPending}
+                  onClick={() => {
+                    void favoriteChannel();
+                  }}
+                >
+                  <Star
+                    className={cn(
+                      'size-4 text-muted-foreground',
+                      currentChannel.starred && 'fill-[#dca94c] text-[#dca94c]',
+                    )}
+                  />
+                </Button>
+              )}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant='ghost'
+                    className='member-button gap-1.5'
+                    aria-label='ワークスペースの情報'
+                  >
+                    <Users className='size-4' />
+                    <span>{data.memberCount}</span>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align='end' className='space-y-3 text-sm'>
+                  <h3 className='font-bold'>みんなの times</h3>
+                  <p className='leading-6 text-muted-foreground'>
+                    {data.memberCount}{' '}
+                    人のメンバーが登録しています。すべてのチャンネルは、ワークスペースの全員に公開されます。
+                  </p>
+                  <p className='text-xs text-muted-foreground'>
+                    {connected
+                      ? 'リアルタイムで更新しています。'
+                      : '約10秒ごとに更新しています。'}
+                  </p>
+                </PopoverContent>
+              </Popover>
+            </header>
+            <div className='channel-tabs'>
+              <span className='channel-tab'>
+                <MessageCircle className='size-3.5' />
+                {view.kind === 'notifications'
+                  ? '通知'
+                  : view.kind === 'saved'
+                    ? '保存した投稿'
+                    : view.kind === 'search'
+                      ? '検索結果'
+                      : 'メッセージ'}
               </span>
+              {currentChannel?.ownerId === data.user.id && (
+                <span className='ml-auto flex items-center gap-1.5 text-xs text-muted-foreground'>
+                  <Sparkles className='size-3.5 text-primary/70' />
+                  あなたの times
+                </span>
+              )}
+            </div>
+            {actionError && (
+              <div
+                role='alert'
+                className='flex items-center justify-between border-b bg-destructive/5 px-5 py-2 text-sm text-destructive'
+              >
+                {actionError}
+                <Button
+                  variant='ghost'
+                  size='icon-sm'
+                  aria-label='エラーを閉じる'
+                  onClick={() => setActionError('')}
+                >
+                  <X />
+                </Button>
+              </div>
             )}
-          </div>
-          {actionError && (
-            <div
-              role='alert'
-              className='flex items-center justify-between border-b bg-destructive/5 px-5 py-2 text-sm text-destructive'
-            >
-              {actionError}
-              <Button
-                variant='ghost'
-                size='icon-sm'
-                aria-label='エラーを閉じる'
-                onClick={() => setActionError('')}
-              >
-                <X />
-              </Button>
-            </div>
-          )}
-          {view.kind === 'notifications' ? (
-            <NotificationsPanel
-              unreadCount={unreadCount}
-              onOpen={openNotification}
-            />
-          ) : (
-            <Timeline
-              key={JSON.stringify(view)}
-              view={view}
-              user={data.user}
-              onThread={openThread}
-              onChannel={openChannel}
-              onOwnChannel={() => {
-                if (ownChannel) openChannel(ownChannel.id);
-              }}
-            />
-          )}
-          {currentChannel ? (
-            <Composer
-              key={currentChannel.id}
-              channelId={currentChannel.id}
-              channelName={currentChannel.name}
+            {view.kind === 'notifications' ? (
+              <NotificationsPanel
+                unreadCount={unreadCount}
+                onOpen={openNotification}
+              />
+            ) : (
+              <Timeline
+                key={JSON.stringify(view)}
+                view={view}
+                user={data.user}
+                onThread={openThread}
+                onChannel={openChannel}
+                onOwnChannel={() => {
+                  if (ownChannel) openChannel(ownChannel.id);
+                }}
+              />
+            )}
+            {currentChannel ? (
+              <Composer
+                key={currentChannel.id}
+                channelId={currentChannel.id}
+                channelName={currentChannel.name}
+                userId={data.user.id}
+              />
+            ) : view.kind === 'all' && ownChannel ? (
+              <div className='feed-footer'>
+                <Button
+                  variant='outline'
+                  className='ml-auto h-9'
+                  onClick={() => openChannel(ownChannel.id)}
+                >
+                  <PencilIcon />
+                  自分の times に書く
+                </Button>
+              </div>
+            ) : null}
+          </main>
+          {threadId && (
+            <ThreadPanel
+              key={threadId}
+              id={threadId}
+              focusId={threadFocusId}
               userId={data.user.id}
+              onClose={() => setThreadId(null)}
+              onChannel={openChannel}
             />
-          ) : view.kind === 'all' && ownChannel ? (
-            <div className='feed-footer'>
-              <Button
-                variant='outline'
-                className='ml-auto h-9'
-                onClick={() => openChannel(ownChannel.id)}
-              >
-                <PencilIcon />
-                自分の times に書く
-              </Button>
-            </div>
-          ) : null}
-        </main>
-        {threadId && (
-          <ThreadPanel
-            key={threadId}
-            id={threadId}
-            focusId={threadFocusId}
-            userId={data.user.id}
-            onClose={() => setThreadId(null)}
-            onChannel={openChannel}
+          )}
+        </div>
+        <CreateChannelDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          onCreated={openChannel}
+        />
+        {currentChannel?.ownerId === data.user.id && (
+          <EditChannelDialog
+            key={currentChannel.id}
+            channel={currentChannel}
+            open={editOpen}
+            onOpenChange={setEditOpen}
           />
         )}
       </div>
-      <CreateChannelDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onCreated={openChannel}
-      />
-      {currentChannel?.ownerId === data.user.id && (
-        <EditChannelDialog
-          key={currentChannel.id}
-          channel={currentChannel}
-          open={editOpen}
-          onOpenChange={setEditOpen}
-        />
-      )}
-    </div>
+    </RealtimeContext>
   );
 };
 
@@ -711,6 +722,7 @@ const Timeline = ({
   onChannel: (id: string) => void;
   onOwnChannel: () => void;
 }) => {
+  const refetchInterval = useRealtimeInterval();
   const isCollection = view.kind === 'saved' || view.kind === 'search';
   const list = useRef<HTMLDivElement>(null);
   const previousNewest = useRef<string | undefined>(undefined);
@@ -742,7 +754,7 @@ const Timeline = ({
         }),
       ),
     getNextPageParam: (page) => page.nextCursor ?? undefined,
-    refetchInterval: 10000,
+    refetchInterval,
   });
   const rows = messages.data?.pages.flatMap((page) => page.messages) ?? [];
   const ordered = isCollection ? rows : [...rows].reverse();
@@ -915,13 +927,14 @@ const ThreadPanel = ({
   onClose: () => void;
   onChannel: (id: string) => void;
 }) => {
+  const refetchInterval = useRealtimeInterval();
   const thread = useQuery({
     queryKey: ['thread', id],
     queryFn: async () =>
       readResponse<Thread>(
         await client.api.messages[':id'].thread.$get({ param: { id } }),
       ),
-    refetchInterval: 10000,
+    refetchInterval,
     retry: false,
   });
   const parent = thread.data?.messages.find(

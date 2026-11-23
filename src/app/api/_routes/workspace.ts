@@ -2,6 +2,7 @@ import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { and, asc, count, eq, exists } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { cleanupUploads } from '@/app/api/_lib/attachments';
+import { publishChange } from '@/app/api/_lib/realtime';
 import type { ApiEnv } from '@/app/api/_lib/types';
 import { channel, favorite, user } from '@/lib/schema';
 
@@ -20,7 +21,7 @@ export const workspaceRoutes = new Hono<ApiEnv>().get('/', async (c) => {
       .toLowerCase()
       .replace(/[^a-z0-9-]/g, '-')
       .slice(0, 30) || 'member';
-  await db.batch([
+  const [generalCreated, personalCreated] = await db.batch([
     db
       .insert(channel)
       .values({
@@ -29,7 +30,8 @@ export const workspaceRoutes = new Hono<ApiEnv>().get('/', async (c) => {
         description: '全員が利用する共有チャンネル',
         createdAt: Date.now(),
       })
-      .onConflictDoNothing(),
+      .onConflictDoNothing()
+      .returning({ id: channel.id }),
     db
       .insert(channel)
       .values({
@@ -39,7 +41,8 @@ export const workspaceRoutes = new Hono<ApiEnv>().get('/', async (c) => {
         ownerId: me.id,
         createdAt: Date.now(),
       })
-      .onConflictDoNothing(),
+      .onConflictDoNothing()
+      .returning({ id: channel.id }),
   ]);
   const [ownChannel] = await db
     .select({ id: channel.id })
@@ -58,6 +61,8 @@ export const workspaceRoutes = new Hono<ApiEnv>().get('/', async (c) => {
       })
       .onConflictDoNothing();
   }
+  if (generalCreated.length || personalCreated.length || !ownChannel)
+    publishChange('workspace');
   const channels = await db
     .select({
       id: channel.id,

@@ -1,5 +1,12 @@
 import { afterAll, expect, test } from 'bun:test';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { parseRealtimeEvent } from '../src/lib/realtime';
+import {
+  connectRealtime,
+  waitForSocketClose,
+  waitForSocketMessage,
+  withRealtimeEvent,
+} from './realtime-helpers';
 
 const baseURL = process.env.TEST_BASE_URL ?? 'http://localhost:8787';
 const target = new URL(baseURL);
@@ -18,6 +25,7 @@ const mentionFixtureIds = Array.from(
 );
 const cookies: string[] = [];
 const uploadedMessages: string[] = [];
+const realtimeSockets: WebSocket[] = [];
 const upload = async (
   files: File[],
   channelId: string,
@@ -77,6 +85,7 @@ type Post = {
 type Page = { messages: Post[]; nextCursor: string | null };
 
 afterAll(async () => {
+  for (const socket of realtimeSockets) socket.close();
   await Promise.allSettled(
     uploadedMessages.map((id) =>
       request(`/messages/${id}`, { method: 'DELETE' }),
@@ -594,6 +603,144 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
     (await request(`/messages/${groupId}`, { method: 'DELETE' })).status,
   ).toBe(200);
 
+  // Real connections against workerd, using the same isolated auth fixtures.
+  expect(
+    (
+      await fetch(`${baseURL}/api/realtime`, {
+        headers: {
+          Origin: baseURL,
+          Upgrade: 'websocket',
+          'x-user-id': workspace.user.id,
+        },
+      })
+    ).status,
+  ).toBe(401);
+  expect(
+    (
+      await fetch(`${baseURL}/api/realtime`, {
+        headers: {
+          Origin: 'https://other.example',
+          Upgrade: 'websocket',
+          Cookie: cookies[0],
+        },
+      })
+    ).status,
+  ).toBe(403);
+  expect(
+    (
+      await fetch(`${baseURL}/api/realtime`, {
+        headers: { Origin: baseURL, Cookie: cookies[0] },
+      })
+    ).status,
+  ).toBe(426);
+  const socketA = await connectRealtime(baseURL, cookies[0]);
+  realtimeSockets.push(socketA);
+  const socketB = await connectRealtime(baseURL, cookies[1]);
+  realtimeSockets.push(socketB);
+  const observedA: string[] = [];
+  socketA.addEventListener('message', (event) => {
+    const parsed = parseRealtimeEvent(event.data);
+    if (parsed) observedA.push(parsed.scope);
+  });
+  const pong = waitForSocketMessage(socketA, (data) => data === 'pong');
+  socketA.send('ping');
+  expect(await pong).toBe('pong');
+  const createdRealtime = await withRealtimeEvent(socketB, 'messages', () =>
+    request('/messages', {
+      method: 'POST',
+      body: { channelId: ownChannel?.id, body: 'realtime post' },
+    }),
+  );
+  expect(createdRealtime.response.status).toBe(201);
+  expect(createdRealtime.payload).toEqual({
+    type: 'changed',
+    scope: 'messages',
+  });
+  const realtimeId = (
+    (await createdRealtime.response.json()) as { message: Post }
+  ).message.id;
+  expect(
+    (
+      await withRealtimeEvent(socketB, 'messages', () =>
+        request(`/messages/${realtimeId}`, {
+          method: 'PATCH',
+          body: { body: 'realtime edited' },
+        }),
+      )
+    ).response.status,
+  ).toBe(200);
+  expect(
+    (
+      await withRealtimeEvent(socketA, 'messages', () =>
+        request('/messages', {
+          method: 'POST',
+          actor: 1,
+          body: {
+            channelId: ownChannel?.id,
+            parentId: realtimeId,
+            body: 'realtime reply',
+          },
+        }),
+      )
+    ).response.status,
+  ).toBe(201);
+  expect(
+    (
+      await withRealtimeEvent(socketA, 'messages', () =>
+        request(`/messages/${realtimeId}/reaction`, {
+          method: 'PUT',
+          actor: 1,
+          body: { emoji: '👍', active: true },
+        }),
+      )
+    ).response.status,
+  ).toBe(200);
+  const publicCount = observedA.length;
+  expect(
+    (
+      await withRealtimeEvent(socketB, 'private', () =>
+        request(`/messages/${realtimeId}/bookmark`, {
+          method: 'PUT',
+          actor: 1,
+          body: { active: true },
+        }),
+      )
+    ).response.status,
+  ).toBe(200);
+  expect(
+    (
+      await withRealtimeEvent(socketB, 'private', () =>
+        request('/notifications/read-all', { method: 'PUT', actor: 1 }),
+      )
+    ).response.status,
+  ).toBe(200);
+  expect(observedA.length).toBe(publicCount);
+  expect(observedA).not.toContain('private');
+  expect(
+    (
+      await withRealtimeEvent(socketB, 'workspace', () =>
+        request(`/channels/${ownChannel?.id}`, {
+          method: 'PATCH',
+          body: { description: 'realtime channel' },
+        }),
+      )
+    ).response.status,
+  ).toBe(200);
+  expect(
+    (
+      await withRealtimeEvent(socketB, 'messages', () =>
+        request(`/messages/${realtimeId}`, { method: 'DELETE' }),
+      )
+    ).response.status,
+  ).toBe(200);
+  const malicious = await connectRealtime(baseURL, cookies[0]);
+  realtimeSockets.push(malicious);
+  const rejectedPublish = waitForSocketClose(malicious);
+  malicious.send(JSON.stringify({ type: 'changed', scope: 'messages' }));
+  expect(await rejectedPublish).toBe(1008);
+  const extraTab = await connectRealtime(baseURL, cookies[0]);
+  realtimeSockets.push(extraTab);
+
   const rootResult = await request('/messages', {
     method: 'POST',
     body: {
@@ -918,11 +1065,21 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
     /not exist|not found|NoSuchKey|404/i,
   );
 
+  const disconnectedA = waitForSocketClose(socketA);
+  const disconnectedExtraTab = waitForSocketClose(extraTab);
   const signedOut = await request('/auth/sign-out', {
     method: 'POST',
     body: {},
   });
   expect(signedOut.status).toBe(200);
+  expect(await disconnectedA).toBe(4001);
+  expect(await disconnectedExtraTab).toBe(4001);
+  const stillConnected = waitForSocketMessage(
+    socketB,
+    (data) => data === 'pong',
+  );
+  socketB.send('ping');
+  expect(await stillConnected).toBe('pong');
   expect((await request('/workspace')).status).toBe(401);
   const signedIn = await request('/auth/sign-in/email', {
     method: 'POST',
