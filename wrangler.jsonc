@@ -4,10 +4,22 @@
   "name": "times-channel",
   "compatibility_date": "2026-11-23",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "vars": {
+    "BETTER_AUTH_URL": "https://times.runfunrun.xyz"
+  },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "times-channel",
+      // Replace with the ID returned by `bunx wrangler d1 create times-channel` before deploying.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "drizzle"
+    }
+  ],
   "services": [
     {
       // Self-reference service binding, the service name must match the worker name
@@ -17,19 +29,9 @@
     }
   ],
   "r2_buckets": [
-    // Use R2 incremental cache
-    // See https://opennext.js.org/cloudflare/caching
     {
-      "binding": "NEXT_INC_CACHE_R2_BUCKET",
-      // Create the bucket before deploying
-      // You can change the bucket name if you want
-      // See https://developers.cloudflare.com/workers/wrangler/commands/#r2-bucket-create
-      "bucket_name": "times-channel-opennext-cache"
+      "binding": "UPLOADS",
+      "bucket_name": "times-channel-uploads"
     }
-  ],
-  "images": {
-    // Enable image optimization
-    // see https://opennext.js.org/cloudflare/howtos/image
-    "binding": "IMAGES"
-  }
+  ]
 }

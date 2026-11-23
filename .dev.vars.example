@@ -1,0 +1,5 @@
+# Copy to .dev.vars and generate a random secret (32+ characters).
+BETTER_AUTH_SECRET=replace-with-a-random-secret-at-least-32-characters
+# Override the production URL in wrangler.jsonc during local development.
+# An empty value detects localhost for both bun dev (3000) and preview (8787).
+BETTER_AUTH_URL=
