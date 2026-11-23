@@ -58,6 +58,7 @@ type Post = {
   userId: string;
   parentId: string | null;
   replyCount: number;
+  channelName: string;
   reactions: { emoji: string; userId: string }[];
   saved: boolean;
   attachments: {
@@ -111,6 +112,7 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
       ownerId: string | null;
       name: string;
       starred: boolean;
+      description: string;
     }[];
   };
   const ownChannel = workspace.channels.find(
@@ -132,6 +134,117 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
   expect(
     again.channels.filter((channel) => channel.ownerId === workspace.user.id),
   ).toHaveLength(1);
+
+  if (!ownChannel) throw new Error('Personal channel missing');
+  expect((secondChannel?.name.length ?? 0) <= 64).toBe(true);
+  const ownPostResult = await request('/messages', {
+    method: 'POST',
+    body: { channelId: ownChannel.id, body: '名前変更前の投稿' },
+  });
+  expect(ownPostResult.status).toBe(201);
+  const ownPost = (await ownPostResult.json()) as { message: Post };
+  expect(
+    (
+      await request(`/channels/${ownChannel.id}`, {
+        method: 'PATCH',
+        actor: 1,
+        body: { name: 'other-user' },
+      })
+    ).status,
+  ).toBe(403);
+  expect(
+    (
+      await request('/channels/general', {
+        method: 'PATCH',
+        body: { name: 'renamed-general' },
+      })
+    ).status,
+  ).toBe(403);
+  expect(
+    (
+      await request('/channels/missing', {
+        method: 'PATCH',
+        body: { name: 'missing' },
+      })
+    ).status,
+  ).toBe(404);
+  for (const body of [
+    {},
+    { name: '' },
+    { name: 'invalid name' },
+    { name: 'x'.repeat(65) },
+    { description: 'x'.repeat(201) },
+  ]) {
+    expect(
+      (await request(`/channels/${ownChannel.id}`, { method: 'PATCH', body }))
+        .status,
+    ).toBe(400);
+  }
+  expect(
+    (
+      await request(`/channels/${ownChannel.id}`, {
+        method: 'PATCH',
+        body: { name: 'general' },
+      })
+    ).status,
+  ).toBe(409);
+  const renamedName = `times-edited-${runId}`;
+  expect(
+    (
+      await request(`/channels/${ownChannel.id}`, {
+        method: 'PATCH',
+        body: { name: renamedName, description: '変更後の説明' },
+      })
+    ).status,
+  ).toBe(200);
+  // Initial workspace loading must preserve the edited name and channel identity.
+  const renamedWorkspace = (await (
+    await request('/workspace')
+  ).json()) as typeof workspace;
+  const renamed = renamedWorkspace.channels.find(
+    (item) => item.ownerId === workspace.user.id,
+  );
+  expect(renamed?.id).toBe(ownChannel.id);
+  expect(renamed?.name).toBe(renamedName);
+  expect(renamed?.description).toBe('変更後の説明');
+  expect(
+    renamedWorkspace.channels.filter(
+      (item) => item.ownerId === workspace.user.id,
+    ),
+  ).toHaveLength(1);
+  const ownTimeline = (await (
+    await request(`/messages?channelId=${ownChannel.id}`)
+  ).json()) as Page;
+  expect(
+    ownTimeline.messages.find((item) => item.id === ownPost.message.id)
+      ?.channelName,
+  ).toBe(renamedName);
+  expect(
+    (
+      await request(`/channels/${ownChannel.id}`, {
+        method: 'PATCH',
+        body: { description: '' },
+      })
+    ).status,
+  ).toBe(200);
+  const descriptionOnly = (await (
+    await request('/workspace')
+  ).json()) as typeof workspace;
+  expect(
+    descriptionOnly.channels.find((item) => item.id === ownChannel.id)?.name,
+  ).toBe(renamedName);
+  expect(
+    descriptionOnly.channels.find((item) => item.id === ownChannel.id)
+      ?.description,
+  ).toBe('');
+  expect(
+    (
+      await request(`/channels/${ownChannel.id}`, {
+        method: 'PATCH',
+        body: { name: renamedName },
+      })
+    ).status,
+  ).toBe(200);
 
   const created = await request('/channels', {
     method: 'POST',

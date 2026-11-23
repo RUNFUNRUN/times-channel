@@ -51,7 +51,7 @@ export const workspaceRoutes = new Hono<ApiEnv>().get('/', async (c) => {
       .insert(channel)
       .values({
         id: `times-${me.id}`,
-        name: `times-${slug}-${crypto.randomUUID()}`,
+        name: `times-${slug.slice(0, 21)}-${crypto.randomUUID()}`,
         description: `${me.name} の times チャンネル`,
         ownerId: me.id,
         createdAt: Date.now(),

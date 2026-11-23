@@ -285,7 +285,7 @@ export const MessageItem = ({
                 <SmilePlus />
               </Button>
             </PopoverTrigger>
-            <PopoverContent className='flex w-auto gap-1 p-2'>
+            <PopoverContent className='flex w-auto max-w-[calc(100vw-2rem)] flex-row flex-nowrap gap-1 overflow-x-auto p-2'>
               {REACTIONS.map((emoji) => (
                 <button
                   type='button'
@@ -293,7 +293,7 @@ export const MessageItem = ({
                   aria-label={`${emoji} でリアクション`}
                   disabled={action.isPending}
                   onClick={() => toggleReaction(emoji)}
-                  className='rounded p-2 text-xl hover:bg-muted'
+                  className='shrink-0 rounded p-2 text-xl hover:bg-muted'
                 >
                   {emoji}
                 </button>

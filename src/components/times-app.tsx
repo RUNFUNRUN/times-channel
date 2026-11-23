@@ -14,6 +14,7 @@ import {
   LogOut,
   Menu,
   MessageCircle,
+  Pencil,
   Plus,
   Search,
   Sparkles,
@@ -25,6 +26,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppearanceDialog } from '@/components/appearance-dialog';
 import { AuthScreen } from '@/components/auth-screen';
 import { Composer } from '@/components/composer';
+import { EditChannelDialog } from '@/components/edit-channel-dialog';
 import { MessageItem, UserAvatar } from '@/components/message-item';
 import { Button } from '@/components/ui/button';
 import {
@@ -141,6 +143,7 @@ const WorkspaceApp = () => {
   const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
   const [starPending, setStarPending] = useState(false);
@@ -150,6 +153,7 @@ const WorkspaceApp = () => {
     setView(next);
     setThreadId(null);
     setSidebarOpen(false);
+    setEditOpen(false);
   }, []);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
@@ -470,14 +474,26 @@ const WorkspaceApp = () => {
                 <span className='truncate'>{title}</span>
               </h2>
               <p className='mt-1 truncate text-xs text-muted-foreground'>
-                {currentChannel?.description ||
-                  (view.kind === 'saved'
+                {currentChannel
+                  ? currentChannel.description
+                  : view.kind === 'saved'
                     ? '保存した投稿は自分だけに表示されます。'
                     : view.kind === 'search'
                       ? 'すべてのチャンネルとスレッドから検索'
-                      : '全チャンネルの投稿')}
+                      : '全チャンネルの投稿'}
               </p>
             </div>
+            {currentChannel?.ownerId === data.user.id && (
+              <Button
+                variant='ghost'
+                size='icon'
+                aria-label='チャンネルを編集'
+                title='チャンネルを編集'
+                onClick={() => setEditOpen(true)}
+              >
+                <Pencil className='size-4 text-muted-foreground' />
+              </Button>
+            )}
             {currentChannel && (
               <Button
                 variant='ghost'
@@ -598,6 +614,14 @@ const WorkspaceApp = () => {
         onOpenChange={setCreateOpen}
         onCreated={openChannel}
       />
+      {currentChannel?.ownerId === data.user.id && (
+        <EditChannelDialog
+          key={currentChannel.id}
+          channel={currentChannel}
+          open={editOpen}
+          onOpenChange={setEditOpen}
+        />
+      )}
     </div>
   );
 };

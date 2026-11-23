@@ -106,7 +106,10 @@ export const Composer = ({
           onKeyDown={(event) => {
             if (
               event.key === 'Enter' &&
-              !event.shiftKey &&
+              event.shiftKey &&
+              !event.altKey &&
+              !event.ctrlKey &&
+              !event.metaKey &&
               !event.nativeEvent.isComposing &&
               event.keyCode !== 229
             ) {
@@ -203,13 +206,13 @@ export const Composer = ({
                   <Smile className='size-4 text-muted-foreground' />
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className='flex w-auto gap-1 p-2'>
+              <PopoverContent className='flex w-auto max-w-[calc(100vw-2rem)] flex-row flex-nowrap gap-1 overflow-x-auto p-2'>
                 {[...REACTIONS, '☕', '💭', '✨', '💻', '🌱', '📝'].map(
                   (emoji) => (
                     <button
                       type='button'
                       key={emoji}
-                      className='rounded p-1.5 text-xl hover:bg-muted'
+                      className='shrink-0 rounded p-1.5 text-xl hover:bg-muted'
                       aria-label={`${emoji} を挿入`}
                       onClick={() => {
                         setDraft((value) =>
@@ -263,7 +266,7 @@ export const Composer = ({
         </p>
       ) : (
         <p className='composer-hint'>
-          <strong>Enter</strong> で送信、<strong>Shift + Enter</strong> で改行
+          <strong>Enter</strong> で改行、<strong>Shift + Enter</strong> で送信
           {files.length > 0 && (
             <span className='ml-2'>
               添付ファイルは送信時にアップロードされます
