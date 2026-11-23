@@ -343,6 +343,32 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
     'image',
     'name',
   ]);
+  const literalMarkdown = await request('/messages', {
+    method: 'POST',
+    body: {
+      channelId: ownChannel.id,
+      body: '```ts\n<@missing-user>\n```\n\n`<@missing-user>` [link](https://example.test/<@missing-user>)',
+    },
+  });
+  expect(literalMarkdown.status).toBe(201);
+  const literalId = ((await literalMarkdown.json()) as { message: Post })
+    .message.id;
+  expect(await unread(1)).toBe(0);
+  const literalRow = (
+    (await (
+      await request(`/messages?channelId=${ownChannel.id}`)
+    ).json()) as Page
+  ).messages.find((item) => item.id === literalId);
+  expect(literalRow?.mentions).toEqual([]);
+  const markdownEdit = await request(`/messages/${literalId}`, {
+    method: 'PATCH',
+    body: { body: `**<@${second.user.id}>** _Markdown mention_` },
+  });
+  expect(markdownEdit.status).toBe(200);
+  expect(await unread(1)).toBe(1);
+  await request(`/messages/${literalId}`, { method: 'DELETE' });
+  expect(await unread(1)).toBe(0);
+
   const mentionBody = `<@${second.user.id}> <@${second.user.id}> <@${workspace.user.id}> notification`;
   const mentioned = await request('/messages', {
     method: 'POST',

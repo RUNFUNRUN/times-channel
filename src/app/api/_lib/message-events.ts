@@ -1,7 +1,7 @@
 import { eq, inArray } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import type { getDB } from '@/lib/db';
-import { getMentionIds } from '@/lib/mentions';
+import { getRenderedMentionIds } from '@/lib/markdown';
 import { messageMention, notification, user } from '@/lib/schema';
 
 type DB = ReturnType<typeof getDB>;
@@ -11,7 +11,7 @@ const chunks = <T>(rows: T[], size: number) =>
   );
 
 export const resolveMentions = async (db: DB, body: string) => {
-  const ids = getMentionIds(body);
+  const ids = getRenderedMentionIds(body);
   if (!ids.length) return [];
   const members = (
     await Promise.all(

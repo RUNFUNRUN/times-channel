@@ -2,6 +2,7 @@
 
 import {
   Bookmark,
+  Eye,
   LoaderCircle,
   MessageSquare,
   MoreHorizontal,
@@ -9,9 +10,11 @@ import {
   SmilePlus,
   Trash2,
 } from 'lucide-react';
-import { Fragment, useState } from 'react';
+import { useState } from 'react';
+import { MarkdownPreview } from '@/components/markdown-preview';
 import { MentionTextarea } from '@/components/mention-textarea';
 import { MessageAttachments } from '@/components/message-attachments';
+import { MessageMarkdown } from '@/components/message-markdown';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -41,66 +44,7 @@ import { UserAvatar } from '@/components/user-avatar';
 import { useMessageAction } from '@/hooks/use-message-action';
 import { type ApiResponse, client, type Message } from '@/lib/api-client';
 import { MESSAGE_LIMIT, REACTIONS } from '@/lib/constants';
-import { displayMentions } from '@/lib/mentions';
 import { cn } from '@/lib/utils';
-
-const MessageBody = ({
-  body,
-  mentions,
-}: {
-  body: string;
-  mentions: Message['mentions'];
-}) => {
-  const display = displayMentions(
-    body,
-    mentions.map((member) => ({ id: member.userId, name: member.name })),
-  );
-  const tokens = [
-    ...display.spans.map((span) => ({
-      start: span.start,
-      end: span.end,
-      kind: 'mention' as const,
-    })),
-    ...Array.from(display.text.matchAll(/https?:\/\/[^\s<>]+/g))
-      .filter(
-        (match) =>
-          !display.spans.some(
-            (span) =>
-              match.index < span.end &&
-              match.index + match[0].length > span.start,
-          ),
-      )
-      .map((match) => ({
-        start: match.index,
-        end: match.index + match[0].length,
-        kind: 'link' as const,
-      })),
-  ].sort((left, right) => left.start - right.start);
-  return (
-    <div className='message-body'>
-      {tokens.map((token, index) => (
-        <Fragment key={token.start}>
-          {display.text.slice(index ? tokens[index - 1].end : 0, token.start)}
-          {token.kind === 'mention' ? (
-            <span className='rounded bg-primary/10 px-1 font-medium text-primary'>
-              {display.text.slice(token.start, token.end)}
-            </span>
-          ) : (
-            <a
-              href={display.text.slice(token.start, token.end)}
-              target='_blank'
-              rel='noopener noreferrer'
-              className='text-link underline decoration-link/30 underline-offset-2 hover:decoration-current'
-            >
-              {display.text.slice(token.start, token.end)}
-            </a>
-          )}
-        </Fragment>
-      ))}
-      {display.text.slice(tokens.at(-1)?.end ?? 0)}
-    </div>
-  );
-};
 
 export const MessageItem = ({
   item,
@@ -120,6 +64,7 @@ export const MessageItem = ({
   highlighted?: boolean;
 }) => {
   const [editing, setEditing] = useState(false);
+  const [editPreview, setEditPreview] = useState(false);
   const [editBody, setEditBody] = useState(item.body);
   const [deleting, setDeleting] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -196,14 +141,28 @@ export const MessageItem = ({
               }
             }}
           >
-            <MentionTextarea
-              aria-label='投稿を編集'
-              value={editBody}
-              onValueChange={setEditBody}
-              maxLength={MESSAGE_LIMIT}
-              className='text-base'
-            />
-            <div className='flex justify-end gap-2'>
+            {editPreview && <MarkdownPreview body={editBody} />}
+            <div hidden={editPreview}>
+              <MentionTextarea
+                aria-label='投稿を編集'
+                value={editBody}
+                onValueChange={setEditBody}
+                maxLength={MESSAGE_LIMIT}
+                className='text-base'
+              />
+            </div>
+            <div className='flex flex-wrap justify-end gap-2'>
+              <Button
+                type='button'
+                variant='ghost'
+                className='mr-auto'
+                aria-label='Markdown プレビュー'
+                aria-pressed={editPreview}
+                onClick={() => setEditPreview((value) => !value)}
+              >
+                <Eye />
+                {editPreview ? '編集に戻る' : 'プレビュー'}
+              </Button>
               <Button
                 variant='outline'
                 type='button'
@@ -223,7 +182,13 @@ export const MessageItem = ({
             </div>
           </form>
         ) : (
-          <MessageBody body={item.body} mentions={item.mentions} />
+          <MessageMarkdown
+            body={item.body}
+            members={item.mentions.map((member) => ({
+              id: member.userId,
+              name: member.name,
+            }))}
+          />
         )}
         <MessageAttachments files={item.attachments} />
         {item.reactions.length > 0 && (
@@ -360,6 +325,7 @@ export const MessageItem = ({
                 <DropdownMenuItem
                   onSelect={() => {
                     setEditBody(item.body);
+                    setEditPreview(false);
                     setEditing(true);
                   }}
                 >

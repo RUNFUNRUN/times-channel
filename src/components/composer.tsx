@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Eye,
   FileText,
   LoaderCircle,
   Paperclip,
@@ -9,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { MarkdownPreview } from '@/components/markdown-preview';
 import { MentionTextarea } from '@/components/mention-textarea';
 import { Button } from '@/components/ui/button';
 import {
@@ -34,6 +36,7 @@ export const Composer = ({
 }) => {
   const storageKey = `times:draft:${userId}:${channelId}:${parentId ?? 'root'}`;
   const [draft, setDraft] = useState<string | null>(null);
+  const [preview, setPreview] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [files, setFiles] = useState<{ id: string; file: File }[]>([]);
   const [fileError, setFileError] = useState('');
@@ -76,7 +79,8 @@ export const Composer = ({
       );
       setDraft('');
       setFiles([]);
-      input.current?.focus();
+      setPreview(false);
+      requestAnimationFrame(() => input.current?.focus());
     } catch {
       /* The mutation error is displayed below the editor. */
     }
@@ -91,34 +95,37 @@ export const Composer = ({
           void send();
         }}
       >
-        <MentionTextarea
-          inputRef={input}
-          aria-label={parentId ? 'スレッドに返信' : `#${channelName} に投稿`}
-          placeholder={
-            parentId
-              ? 'スレッドに返信する…'
-              : `# ${channelName} にメッセージを入力`
-          }
-          value={draft ?? ''}
-          disabled={draft === null || action.isPending}
-          maxLength={MESSAGE_LIMIT}
-          onValueChange={setDraft}
-          onKeyDown={(event) => {
-            if (
-              event.key === 'Enter' &&
-              event.shiftKey &&
-              !event.altKey &&
-              !event.ctrlKey &&
-              !event.metaKey &&
-              !event.nativeEvent.isComposing &&
-              event.keyCode !== 229
-            ) {
-              event.preventDefault();
-              void send();
+        {preview && <MarkdownPreview body={draft ?? ''} />}
+        <div hidden={preview}>
+          <MentionTextarea
+            inputRef={input}
+            aria-label={parentId ? 'スレッドに返信' : `#${channelName} に投稿`}
+            placeholder={
+              parentId
+                ? 'スレッドに返信する…'
+                : `# ${channelName} にメッセージを入力`
             }
-          }}
-          className='min-h-24 resize-none border-0 bg-transparent px-4 pt-4 text-base shadow-none focus-visible:ring-0'
-        />
+            value={draft ?? ''}
+            disabled={draft === null || action.isPending}
+            maxLength={MESSAGE_LIMIT}
+            onValueChange={setDraft}
+            onKeyDown={(event) => {
+              if (
+                event.key === 'Enter' &&
+                event.shiftKey &&
+                !event.altKey &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                !event.nativeEvent.isComposing &&
+                event.keyCode !== 229
+              ) {
+                event.preventDefault();
+                void send();
+              }
+            }}
+            className='min-h-24 resize-none border-0 bg-transparent px-4 pt-4 text-base shadow-none focus-visible:ring-0'
+          />
+        </div>
         {files.length > 0 && (
           <ul
             className='flex flex-wrap gap-2 px-3 pb-3'
@@ -183,6 +190,24 @@ export const Composer = ({
         />
         <div className='flex items-center justify-between px-3 pb-2'>
           <div className='flex items-center gap-1'>
+            <Button
+              type='button'
+              variant='ghost'
+              size='sm'
+              aria-label='Markdown プレビュー'
+              aria-pressed={preview}
+              disabled={draft === null || action.isPending}
+              onClick={() => {
+                setPreview((value) => !value);
+                if (preview)
+                  requestAnimationFrame(() => input.current?.focus());
+              }}
+            >
+              <Eye className='size-4' />
+              <span className='text-xs'>
+                {preview ? '編集に戻る' : 'プレビュー'}
+              </span>
+            </Button>
             <Button
               type='button'
               variant='ghost'
@@ -267,7 +292,7 @@ export const Composer = ({
       ) : (
         <p className='composer-hint'>
           <strong>Enter</strong> で改行、<strong>Shift + Enter</strong> で送信
-          <span className='ml-2'>@ でメンション</span>
+          <span className='ml-2'>@ でメンション・Markdown 対応</span>
           {files.length > 0 && (
             <span className='ml-2'>
               添付ファイルは送信時にアップロードされます
