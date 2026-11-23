@@ -4,7 +4,9 @@ import { requireSession } from '@/app/api/_lib/middleware';
 import type { ApiEnv } from '@/app/api/_lib/types';
 import { authRoutes } from '@/app/api/_routes/auth';
 import { channelsRoutes } from '@/app/api/_routes/channels';
+import { membersRoutes } from '@/app/api/_routes/members';
 import { messagesRoutes } from '@/app/api/_routes/messages';
+import { notificationsRoutes } from '@/app/api/_routes/notifications';
 import { threadsRoutes } from '@/app/api/_routes/threads';
 import { uploadsRoutes } from '@/app/api/_routes/uploads';
 import { workspaceRoutes } from '@/app/api/_routes/workspace';
@@ -17,6 +19,8 @@ export const app = new Hono<ApiEnv>()
   .route('/channels', channelsRoutes)
   .route('/messages', messagesRoutes)
   .route('/messages', threadsRoutes)
+  .route('/members', membersRoutes)
+  .route('/notifications', notificationsRoutes)
   .route('/uploads', uploadsRoutes);
 
 app.onError((error, c) => {

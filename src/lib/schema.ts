@@ -148,6 +148,52 @@ export const fileCleanup = sqliteTable('file_cleanup', {
   objectKey: text('object_key').primaryKey(),
 });
 
+export const messageMention = sqliteTable(
+  'message_mention',
+  {
+    messageId: text('message_id')
+      .notNull()
+      .references(() => message.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.messageId, table.userId] }),
+    index('mention_user_idx').on(table.userId),
+  ],
+);
+
+export const notification = sqliteTable(
+  'notification',
+  {
+    id: text('id').primaryKey(),
+    eventKey: text('event_key').notNull().unique(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    actorId: text('actor_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    messageId: text('message_id')
+      .notNull()
+      .references(() => message.id, { onDelete: 'cascade' }),
+    kind: text('kind', { enum: ['mention', 'reply', 'reaction'] }).notNull(),
+    emoji: text('emoji'),
+    createdAt: integer('created_at').notNull(),
+    readAt: integer('read_at'),
+  },
+  (table) => [
+    index('notification_user_time_idx').on(
+      table.userId,
+      table.createdAt,
+      table.id,
+    ),
+    index('notification_unread_idx').on(table.userId, table.readAt),
+    index('notification_message_idx').on(table.messageId),
+  ],
+);
+
 export const bookmark = sqliteTable(
   'bookmark',
   {
@@ -186,4 +232,6 @@ export const schema = {
   favorite,
   attachment,
   fileCleanup,
+  messageMention,
+  notification,
 };

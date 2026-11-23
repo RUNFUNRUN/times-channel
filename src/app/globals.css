@@ -290,20 +290,6 @@ a:focus-visible {
   color: white;
   background: var(--shell-surface);
 }
-.rail-workspace {
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
-  width: 37px;
-  height: 37px;
-  border-radius: 11px;
-  border: 1px solid #ffffff29;
-  background: var(--primary);
-  font-size: 29px;
-  font-weight: 750;
-  line-height: 33px;
-  letter-spacing: -2px;
-}
 .rail-item {
   display: flex;
   flex-direction: column;

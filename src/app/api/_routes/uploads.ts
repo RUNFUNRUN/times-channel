@@ -11,6 +11,10 @@ import {
   normalizeFileName,
   validateMessageTarget,
 } from '@/app/api/_lib/attachments';
+import {
+  messageEventWrites,
+  resolveMentions,
+} from '@/app/api/_lib/message-events';
 import type { ApiEnv } from '@/app/api/_lib/types';
 import {
   MAX_ATTACHMENTS,
@@ -44,9 +48,11 @@ export const uploadsRoutes = new Hono<ApiEnv>()
       const { files, ...input } = c.req.valid('form');
       const invalid = validateFiles(files);
       if (invalid) throw new HTTPException(400, { message: invalid });
-      await validateMessageTarget(c.var.db, input);
+      const parent = await validateMessageTarget(c.var.db, input);
+      const mentionIds = await resolveMentions(c.var.db, input.body);
       const { env } = getCloudflareContext();
       const messageId = crypto.randomUUID();
+      const createdAt = Date.now();
       const attachments = await Promise.all(
         files.map(async (file) => {
           const id = crypto.randomUUID();
@@ -75,10 +81,17 @@ export const uploadsRoutes = new Hono<ApiEnv>()
               ...input,
               id: messageId,
               userId: c.var.user.id,
-              createdAt: Date.now(),
+              createdAt,
             })
             .returning(),
           c.var.db.insert(attachment).values(attachments),
+          ...messageEventWrites(c.var.db, {
+            messageId,
+            actorId: c.var.user.id,
+            mentionIds,
+            parentAuthorId: parent?.userId,
+            createdAt,
+          }),
         ]);
         return c.json({ message: created[0] }, 201);
       } catch (error) {

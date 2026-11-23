@@ -12,6 +12,10 @@ if (
 const runId = crypto.randomUUID();
 const emails = [`qa-${runId}@example.test`, `qa-${runId}@other.example.test`];
 const channelName = `qa-${runId}`;
+const mentionFixtureIds = Array.from(
+  { length: 60 },
+  (_, index) => `qm-${runId}-${index}`,
+);
 const cookies: string[] = [];
 const uploadedMessages: string[] = [];
 const upload = async (
@@ -19,10 +23,11 @@ const upload = async (
   channelId: string,
   parentId?: string,
   actor = 0,
+  body = '',
 ) => {
   const form = new FormData();
   form.set('channelId', channelId);
-  form.set('body', '');
+  form.set('body', body);
   if (parentId) form.set('parentId', parentId);
   for (const file of files) form.append('files', file);
   const result = await fetch(`${baseURL}/api/uploads`, {
@@ -61,6 +66,7 @@ type Post = {
   channelName: string;
   reactions: { emoji: string; userId: string }[];
   saved: boolean;
+  mentions: { userId: string; name: string }[];
   attachments: {
     id: string;
     name: string;
@@ -79,7 +85,7 @@ afterAll(async () => {
   // Remove only this run's fixtures from Wrangler's default local D1 state.
   // No remote option is accepted here or in TEST_BASE_URL.
   const emailList = emails.map((email) => `'${email}'`).join(',');
-  const cleanup = `INSERT OR IGNORE INTO file_cleanup (object_key) SELECT attachment.object_key FROM attachment JOIN message ON attachment.message_id = message.id JOIN channel ON message.channel_id = channel.id WHERE channel.name = '${channelName}' OR message.user_id IN (SELECT id FROM user WHERE email IN (${emailList})); DELETE FROM channel WHERE name = '${channelName}' OR owner_id IN (SELECT id FROM user WHERE email IN (${emailList})); DELETE FROM user WHERE email IN (${emailList});`;
+  const cleanup = `INSERT OR IGNORE INTO file_cleanup (object_key) SELECT attachment.object_key FROM attachment JOIN message ON attachment.message_id = message.id JOIN channel ON message.channel_id = channel.id WHERE channel.name = '${channelName}' OR message.user_id IN (SELECT id FROM user WHERE email IN (${emailList})); DELETE FROM channel WHERE name = '${channelName}' OR owner_id IN (SELECT id FROM user WHERE email IN (${emailList})); DELETE FROM user WHERE email IN (${emailList}) OR id IN (${mentionFixtureIds.map((id) => `'${id}'`).join(',')});`;
   execFileSync(
     'bunx',
     ['wrangler', 'd1', 'execute', 'DB', '--local', '--command', cleanup],
@@ -293,6 +299,300 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
       })
     ).status,
   ).toBe(403);
+
+  // Notifications are scoped to synthetic accounts and use the owner's channel.
+  type Notice = {
+    id: string;
+    kind: string;
+    readAt: number | null;
+    messageId: string;
+    threadId: string;
+    body: string;
+  };
+  type Notices = { notifications: Notice[]; nextCursor: string | null };
+  const inbox = async (actor: number, query = '') =>
+    (await (
+      await request(`/notifications${query}`, { actor })
+    ).json()) as Notices;
+  const unread = async (actor: number) =>
+    (
+      (await (
+        await request('/notifications/unread-count', { actor })
+      ).json()) as { unreadCount: number }
+    ).unreadCount;
+  const membersResponse = await request('/members');
+  expect(membersResponse.status).toBe(200);
+  const memberList = (await membersResponse.json()) as {
+    members: { id: string; name: string; email: string }[];
+  };
+  expect(
+    memberList.members.find((member) => member.id === second.user.id)?.email,
+  ).toBe(emails[1]);
+  expect(Object.keys(memberList.members[0]).sort()).toEqual([
+    'email',
+    'id',
+    'name',
+  ]);
+  const mentionBody = `<@${second.user.id}> <@${second.user.id}> <@${workspace.user.id}> notification`;
+  const mentioned = await request('/messages', {
+    method: 'POST',
+    body: { channelId: ownChannel?.id, body: mentionBody },
+  });
+  expect(mentioned.status).toBe(201);
+  const mentionRoot = ((await mentioned.json()) as { message: Post }).message;
+  expect(await unread(0)).toBe(0);
+  expect(await unread(1)).toBe(1);
+  const notice = (await inbox(1)).notifications[0];
+  expect(notice.kind).toBe('mention');
+  expect(notice.threadId).toBe(mentionRoot.id);
+  expect(notice.body).toContain('@QA 1');
+  expect(notice.body).not.toContain('<@');
+  const mentionRows = (
+    (await (
+      await request(`/messages?channelId=${ownChannel?.id}`)
+    ).json()) as Page
+  ).messages.find((row) => row.id === mentionRoot.id);
+  expect(mentionRows?.mentions.length).toBe(2);
+  const searchMentions = (await (
+    await request('/messages?q=%40QA%201')
+  ).json()) as Page;
+  expect(searchMentions.messages.some((row) => row.id === mentionRoot.id)).toBe(
+    true,
+  );
+  expect(
+    (
+      await request('/messages', {
+        method: 'POST',
+        body: { channelId: ownChannel?.id, body: '<@missing-user>' },
+      })
+    ).status,
+  ).toBe(400);
+  expect(
+    (
+      await request(`/notifications/${notice.id}/read`, {
+        method: 'PUT',
+        body: { read: true },
+      })
+    ).status,
+  ).toBe(404);
+  expect(
+    (
+      await request(`/notifications/${notice.id}/read`, {
+        method: 'PUT',
+        actor: 1,
+        body: { read: true },
+      })
+    ).status,
+  ).toBe(200);
+  const readAt = (await inbox(1)).notifications[0].readAt;
+  expect(readAt).toBeNumber();
+  expect(await unread(1)).toBe(0);
+  expect((await inbox(1, '?unread=true')).notifications).toHaveLength(0);
+  await request(`/notifications/${notice.id}/read`, {
+    method: 'PUT',
+    actor: 1,
+    body: { read: true },
+  });
+  expect((await inbox(1)).notifications[0].readAt).toBe(readAt);
+  await request(`/messages/${mentionRoot.id}`, {
+    method: 'PATCH',
+    body: { body: `${mentionBody} edited` },
+  });
+  expect((await inbox(1)).notifications[0].id).toBe(notice.id);
+  expect((await inbox(1)).notifications[0].readAt).toBe(readAt);
+  await request(`/notifications/${notice.id}/read`, {
+    method: 'PUT',
+    actor: 1,
+    body: { read: false },
+  });
+  expect(await unread(1)).toBe(1);
+  await request(`/messages/${mentionRoot.id}`, {
+    method: 'PATCH',
+    body: { body: 'removed mentions' },
+  });
+  expect((await inbox(1)).notifications).toHaveLength(0);
+  await request(`/messages/${mentionRoot.id}`, {
+    method: 'PATCH',
+    body: { body: mentionBody },
+  });
+  expect(await unread(1)).toBe(1);
+  const explicitReply = await request('/messages', {
+    method: 'POST',
+    actor: 1,
+    body: {
+      channelId: ownChannel?.id,
+      parentId: mentionRoot.id,
+      body: `<@${workspace.user.id}> reply`,
+    },
+  });
+  expect(explicitReply.status).toBe(201);
+  expect((await inbox(0)).notifications.map((item) => item.kind)).toEqual([
+    'mention',
+  ]);
+  const replyId = ((await explicitReply.json()) as { message: Post }).message
+    .id;
+  const replyNotice = (await inbox(0)).notifications[0];
+  expect(replyNotice.messageId).toBe(replyId);
+  expect(replyNotice.threadId).toBe(mentionRoot.id);
+  await request('/messages', {
+    method: 'POST',
+    actor: 1,
+    body: {
+      channelId: ownChannel?.id,
+      parentId: mentionRoot.id,
+      body: 'ordinary reply',
+    },
+  });
+  expect(
+    (await inbox(0)).notifications.map((item) => item.kind).sort(),
+  ).toEqual(['mention', 'reply']);
+  const reactionPath = `/messages/${mentionRoot.id}/reaction`;
+  for (const active of [true, true])
+    expect(
+      (
+        await request(reactionPath, {
+          method: 'PUT',
+          actor: 1,
+          body: { emoji: '👍', active },
+        })
+      ).status,
+    ).toBe(200);
+  expect(
+    (await inbox(0)).notifications.filter((item) => item.kind === 'reaction'),
+  ).toHaveLength(1);
+  await request(reactionPath, {
+    method: 'PUT',
+    actor: 1,
+    body: { emoji: '👍', active: false },
+  });
+  expect(
+    (await inbox(0)).notifications.filter((item) => item.kind === 'reaction'),
+  ).toHaveLength(0);
+  await request(reactionPath, {
+    method: 'PUT',
+    body: { emoji: '👍', active: true },
+  });
+  expect(await unread(0)).toBe(2);
+  await request('/notifications/read-all', { method: 'PUT' });
+  expect(await unread(0)).toBe(0);
+  expect(await unread(1)).toBe(1);
+  await request(`/messages/${mentionRoot.id}`, { method: 'DELETE' });
+  expect((await inbox(0)).notifications).toHaveLength(0);
+  expect((await inbox(1)).notifications).toHaveLength(0);
+  const mentionedFile = await upload(
+    [new File(['mentioned file'], 'mention.txt')],
+    ownChannel?.id ?? '',
+    undefined,
+    0,
+    `<@${second.user.id}> file`,
+  );
+  expect(mentionedFile.status).toBe(201);
+  expect(await unread(1)).toBe(1);
+  await request(`/messages/${mentionedFile.data.message.id}`, {
+    method: 'DELETE',
+  });
+  expect(await unread(1)).toBe(0);
+  expect(
+    (
+      await upload(
+        [new File(['invalid'], 'invalid.txt')],
+        ownChannel?.id ?? '',
+        undefined,
+        0,
+        '<@missing-user>',
+      )
+    ).status,
+  ).toBe(400);
+  // Cursor ordering remains stable for notifications created within the same millisecond.
+  for (const index of Array.from({ length: 51 }, (_, index) => index)) {
+    const result = await request('/messages', {
+      method: 'POST',
+      body: {
+        channelId: ownChannel?.id,
+        body: `<@${second.user.id}> page ${index}`,
+      },
+    });
+    expect(result.status).toBe(201);
+  }
+  const firstNotices = await inbox(1);
+  expect(firstNotices.notifications).toHaveLength(50);
+  expect(firstNotices.nextCursor).not.toBeNull();
+  const olderNotices = await inbox(
+    1,
+    `?before=${encodeURIComponent(firstNotices.nextCursor ?? '')}`,
+  );
+  expect(olderNotices.notifications).toHaveLength(1);
+  expect(
+    new Set(
+      [...firstNotices.notifications, ...olderNotices.notifications].map(
+        (item) => item.id,
+      ),
+    ).size,
+  ).toBe(51);
+  expect(await unread(1)).toBe(51);
+  await request('/notifications/read-all', { method: 'PUT', actor: 1 });
+  expect(await unread(1)).toBe(0);
+  await request('/messages', {
+    method: 'POST',
+    body: {
+      channelId: ownChannel?.id,
+      body: `<@${second.user.id}> new unread`,
+    },
+  });
+  expect(await unread(1)).toBe(1);
+
+  // Exercise multi-recipient writes across D1 statement parameter boundaries.
+  const mentionFixtures = mentionFixtureIds
+    .map(
+      (id) =>
+        `('${id}', 'QA mention', '${id}@example.test', 0, ${Date.now()}, ${Date.now()})`,
+    )
+    .join(',');
+  execFileSync(
+    'bunx',
+    [
+      'wrangler',
+      'd1',
+      'execute',
+      'DB',
+      '--local',
+      '--command',
+      `INSERT INTO user (id, name, email, email_verified, created_at, updated_at) VALUES ${mentionFixtures}`,
+    ],
+    { stdio: 'pipe' },
+  );
+  const groupBody = mentionFixtureIds.map((id) => `<@${id}>`).join(' ');
+  const groupPost = await request('/messages', {
+    method: 'POST',
+    body: { channelId: ownChannel?.id, body: groupBody },
+  });
+  expect(groupPost.status).toBe(201);
+  const groupId = ((await groupPost.json()) as { message: Post }).message.id;
+  const groupRow = (
+    (await (
+      await request(`/messages?channelId=${ownChannel?.id}`)
+    ).json()) as Page
+  ).messages.find((row) => row.id === groupId);
+  expect(groupRow?.mentions).toHaveLength(60);
+  expect(
+    (
+      await request(`/messages/${groupId}`, {
+        method: 'PATCH',
+        body: { body: `${groupBody} edited` },
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await request(`/messages/${groupId}`, {
+        method: 'PATCH',
+        body: { body: 'removed group mentions' },
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (await request(`/messages/${groupId}`, { method: 'DELETE' })).status,
+  ).toBe(200);
 
   const rootResult = await request('/messages', {
     method: 'POST',
@@ -629,4 +929,4 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
     body: { email: emails[0], password: `test-only-${runId}` },
   });
   expect(signedIn.status).toBe(200);
-}, 60000);
+}, 120000);

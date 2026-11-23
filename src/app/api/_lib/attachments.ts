@@ -23,14 +23,14 @@ export const validateMessageTarget = async (
     .where(eq(channel.id, input.channelId));
   if (!target)
     throw new HTTPException(404, { message: 'チャンネルが見つかりません。' });
+  const [parent] = input.parentId
+    ? await db.select().from(message).where(eq(message.id, input.parentId))
+    : [];
   if (input.parentId) {
-    const [parent] = await db
-      .select()
-      .from(message)
-      .where(eq(message.id, input.parentId));
     if (!parent || parent.parentId || parent.channelId !== input.channelId)
       throw new HTTPException(400, { message: '返信先が見つかりません。' });
   }
+  return parent;
 };
 
 export const getAttachments = async (db: DB, messageIds: string[]) =>

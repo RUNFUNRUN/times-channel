@@ -9,13 +9,13 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { MentionTextarea } from '@/components/mention-textarea';
 import { Button } from '@/components/ui/button';
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { Textarea } from '@/components/ui/textarea';
 import { useMessageAction } from '@/hooks/use-message-action';
 import { client } from '@/lib/api-client';
 import { MESSAGE_LIMIT, REACTIONS } from '@/lib/constants';
@@ -91,8 +91,8 @@ export const Composer = ({
           void send();
         }}
       >
-        <Textarea
-          ref={input}
+        <MentionTextarea
+          inputRef={input}
           aria-label={parentId ? 'スレッドに返信' : `#${channelName} に投稿`}
           placeholder={
             parentId
@@ -102,7 +102,7 @@ export const Composer = ({
           value={draft ?? ''}
           disabled={draft === null || action.isPending}
           maxLength={MESSAGE_LIMIT}
-          onChange={(event) => setDraft(event.target.value)}
+          onValueChange={setDraft}
           onKeyDown={(event) => {
             if (
               event.key === 'Enter' &&
@@ -267,6 +267,7 @@ export const Composer = ({
       ) : (
         <p className='composer-hint'>
           <strong>Enter</strong> で改行、<strong>Shift + Enter</strong> で送信
+          <span className='ml-2'>@ でメンション</span>
           {files.length > 0 && (
             <span className='ml-2'>
               添付ファイルは送信時にアップロードされます

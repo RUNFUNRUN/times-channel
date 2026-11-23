@@ -17,6 +17,12 @@ export type Thread = InferResponseType<
   (typeof client.api.messages)[':id']['thread']['$get'],
   200
 >;
+export type Members = InferResponseType<typeof client.api.members.$get, 200>;
+export type NotificationPage = InferResponseType<
+  typeof client.api.notifications.$get,
+  200
+>;
+export type NotificationItem = NotificationPage['notifications'][number];
 
 export type ApiResponse = {
   ok: boolean;

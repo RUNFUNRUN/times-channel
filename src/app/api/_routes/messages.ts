@@ -11,6 +11,7 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
@@ -19,6 +20,12 @@ import {
   getAttachments,
   validateMessageTarget,
 } from '@/app/api/_lib/attachments';
+import {
+  getMessageMentions,
+  messageEventWrites,
+  notificationRecord,
+  resolveMentions,
+} from '@/app/api/_lib/message-events';
 import type { ApiEnv } from '@/app/api/_lib/types';
 import { MESSAGE_LIMIT, REACTIONS } from '@/lib/constants';
 import {
@@ -27,6 +34,8 @@ import {
   channel,
   fileCleanup,
   message,
+  messageMention,
+  notification,
   reaction,
   user,
 } from '@/lib/schema';
@@ -34,6 +43,7 @@ import {
 const bodySchema = z.object({
   body: z.string().trim().min(1).max(MESSAGE_LIMIT),
 });
+const mentionedUser = alias(user, 'mentioned_user');
 
 export const messagesRoutes = new Hono<ApiEnv>()
   .get(
@@ -55,6 +65,7 @@ export const messagesRoutes = new Hono<ApiEnv>()
         ? await db.select().from(message).where(eq(message.id, before))
         : [];
       const escaped = q?.replace(/[!%_]/g, '!$&');
+      const mentionSearch = escaped?.replace(/^@/, '');
       const rows = await db
         .select({
           id: message.id,
@@ -88,7 +99,29 @@ export const messagesRoutes = new Hono<ApiEnv>()
             !q && !saved ? isNull(message.parentId) : undefined,
             channelId ? eq(message.channelId, channelId) : undefined,
             escaped
-              ? sql`${message.body} like ${`%${escaped}%`} escape '!'`
+              ? or(
+                  sql`${message.body} like ${`%${escaped}%`} escape '!'`,
+                  mentionSearch
+                    ? exists(
+                        db
+                          .select()
+                          .from(messageMention)
+                          .innerJoin(
+                            mentionedUser,
+                            eq(messageMention.userId, mentionedUser.id),
+                          )
+                          .where(
+                            and(
+                              eq(messageMention.messageId, message.id),
+                              or(
+                                sql`${mentionedUser.name} like ${`%${mentionSearch}%`} escape '!'`,
+                                sql`${mentionedUser.email} like ${`%${mentionSearch}%`} escape '!'`,
+                              ),
+                            ),
+                          ),
+                      )
+                    : undefined,
+                )
               : undefined,
             saved
               ? exists(
@@ -117,6 +150,10 @@ export const messagesRoutes = new Hono<ApiEnv>()
         .orderBy(desc(message.createdAt), desc(message.id))
         .limit(51);
       const selected = rows.slice(0, 50);
+      const mentions = await getMessageMentions(
+        db,
+        selected.map((row) => row.id),
+      );
       const attachments = await getAttachments(
         db,
         selected.map((row) => row.id),
@@ -136,6 +173,7 @@ export const messagesRoutes = new Hono<ApiEnv>()
         messages: selected.map((row) => ({
           ...row,
           saved: Boolean(row.saved),
+          mentions: mentions.filter((item) => item.messageId === row.id),
           attachments: attachments.filter((item) => item.messageId === row.id),
           reactions: reactions
             .filter((item) => item.messageId === row.id)
@@ -156,17 +194,24 @@ export const messagesRoutes = new Hono<ApiEnv>()
     ),
     async (c) => {
       const input = c.req.valid('json');
-      await validateMessageTarget(c.var.db, input);
-      const [created] = await c.var.db
-        .insert(message)
-        .values({
-          ...input,
-          id: crypto.randomUUID(),
-          userId: c.var.user.id,
-          createdAt: Date.now(),
-        })
-        .returning();
-      return c.json({ message: created }, 201);
+      const parent = await validateMessageTarget(c.var.db, input);
+      const mentionIds = await resolveMentions(c.var.db, input.body);
+      const id = crypto.randomUUID();
+      const createdAt = Date.now();
+      const [created] = await c.var.db.batch([
+        c.var.db
+          .insert(message)
+          .values({ ...input, id, userId: c.var.user.id, createdAt })
+          .returning(),
+        ...messageEventWrites(c.var.db, {
+          messageId: id,
+          actorId: c.var.user.id,
+          mentionIds,
+          parentAuthorId: parent?.userId,
+          createdAt,
+        }),
+      ]);
+      return c.json({ message: created[0] }, 201);
     },
   )
   .patch(
@@ -194,16 +239,38 @@ export const messagesRoutes = new Hono<ApiEnv>()
         !(await getAttachments(c.var.db, [target.id])).length
       )
         throw new HTTPException(400, { message: '本文を入力してください。' });
-      const changed = await c.var.db
-        .update(message)
-        .set({ body: c.req.valid('json').body, updatedAt: Date.now() })
-        .where(
-          and(
-            eq(message.id, c.req.param('id')),
-            eq(message.userId, c.var.user.id),
+      const body = c.req.valid('json').body;
+      const mentionIds = await resolveMentions(c.var.db, body);
+      const now = Date.now();
+      const [changed] = await c.var.db.batch([
+        c.var.db
+          .update(message)
+          .set({ body, updatedAt: now })
+          .where(
+            and(eq(message.id, target.id), eq(message.userId, c.var.user.id)),
+          )
+          .returning(),
+        c.var.db
+          .delete(messageMention)
+          .where(eq(messageMention.messageId, target.id)),
+        c.var.db
+          .delete(notification)
+          .where(
+            and(
+              eq(notification.messageId, target.id),
+              eq(notification.kind, 'mention'),
+              mentionIds.length
+                ? sql`${notification.userId} not in (select value from json_each(${JSON.stringify(mentionIds)}))`
+                : undefined,
+            ),
           ),
-        )
-        .returning();
+        ...messageEventWrites(c.var.db, {
+          messageId: target.id,
+          actorId: c.var.user.id,
+          mentionIds,
+          createdAt: now,
+        }),
+      ]);
       if (!changed.length)
         throw new HTTPException(404, {
           message: '自分の投稿のみ編集できます。',
@@ -260,20 +327,52 @@ export const messagesRoutes = new Hono<ApiEnv>()
       if (!target)
         throw new HTTPException(404, { message: '投稿が見つかりません。' });
       if (active)
-        await c.var.db
-          .insert(reaction)
-          .values({ messageId, userId: c.var.user.id, emoji })
-          .onConflictDoNothing();
+        await c.var.db.batch([
+          c.var.db
+            .insert(reaction)
+            .values({ messageId, userId: c.var.user.id, emoji })
+            .onConflictDoNothing(),
+          ...(target.userId !== c.var.user.id
+            ? [
+                c.var.db
+                  .insert(notification)
+                  .values(
+                    notificationRecord({
+                      userId: target.userId,
+                      actorId: c.var.user.id,
+                      messageId,
+                      kind: 'reaction',
+                      emoji,
+                      createdAt: Date.now(),
+                    }),
+                  )
+                  .onConflictDoNothing(),
+              ]
+            : []),
+        ]);
       else
-        await c.var.db
-          .delete(reaction)
-          .where(
-            and(
-              eq(reaction.messageId, messageId),
-              eq(reaction.userId, c.var.user.id),
-              eq(reaction.emoji, emoji),
+        await c.var.db.batch([
+          c.var.db
+            .delete(reaction)
+            .where(
+              and(
+                eq(reaction.messageId, messageId),
+                eq(reaction.userId, c.var.user.id),
+                eq(reaction.emoji, emoji),
+              ),
             ),
-          );
+          c.var.db
+            .delete(notification)
+            .where(
+              and(
+                eq(notification.messageId, messageId),
+                eq(notification.userId, target.userId),
+                eq(notification.actorId, c.var.user.id),
+                eq(notification.kind, 'reaction'),
+                eq(notification.emoji, emoji),
+              ),
+            ),
+        ]);
       return c.json({ ok: true });
     },
   )

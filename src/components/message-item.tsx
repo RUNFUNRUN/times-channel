@@ -10,6 +10,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Fragment, useState } from 'react';
+import { MentionTextarea } from '@/components/mention-textarea';
 import { MessageAttachments } from '@/components/message-attachments';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -32,7 +33,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Tooltip,
   TooltipContent,
@@ -41,6 +41,7 @@ import {
 import { useMessageAction } from '@/hooks/use-message-action';
 import { type ApiResponse, client, type Message } from '@/lib/api-client';
 import { MESSAGE_LIMIT, REACTIONS } from '@/lib/constants';
+import { displayMentions } from '@/lib/mentions';
 import { cn } from '@/lib/utils';
 
 const colors = [
@@ -72,33 +73,60 @@ export const UserAvatar = ({
   );
 };
 
-const MessageBody = ({ body }: { body: string }) => {
-  const links = Array.from(body.matchAll(/https?:\/\/[^\s<>]+/g));
+const MessageBody = ({
+  body,
+  mentions,
+}: {
+  body: string;
+  mentions: Message['mentions'];
+}) => {
+  const display = displayMentions(
+    body,
+    mentions.map((member) => ({ id: member.userId, name: member.name })),
+  );
+  const tokens = [
+    ...display.spans.map((span) => ({
+      start: span.start,
+      end: span.end,
+      kind: 'mention' as const,
+    })),
+    ...Array.from(display.text.matchAll(/https?:\/\/[^\s<>]+/g))
+      .filter(
+        (match) =>
+          !display.spans.some(
+            (span) =>
+              match.index < span.end &&
+              match.index + match[0].length > span.start,
+          ),
+      )
+      .map((match) => ({
+        start: match.index,
+        end: match.index + match[0].length,
+        kind: 'link' as const,
+      })),
+  ].sort((left, right) => left.start - right.start);
   return (
     <div className='message-body'>
-      {links.map((match, index) => (
-        <Fragment key={match.index}>
-          {body.slice(
-            index === 0
-              ? 0
-              : links[index - 1].index + links[index - 1][0].length,
-            match.index,
+      {tokens.map((token, index) => (
+        <Fragment key={token.start}>
+          {display.text.slice(index ? tokens[index - 1].end : 0, token.start)}
+          {token.kind === 'mention' ? (
+            <span className='rounded bg-primary/10 px-1 font-medium text-primary'>
+              {display.text.slice(token.start, token.end)}
+            </span>
+          ) : (
+            <a
+              href={display.text.slice(token.start, token.end)}
+              target='_blank'
+              rel='noopener noreferrer'
+              className='text-link underline decoration-link/30 underline-offset-2 hover:decoration-current'
+            >
+              {display.text.slice(token.start, token.end)}
+            </a>
           )}
-          <a
-            href={match[0]}
-            target='_blank'
-            rel='noopener noreferrer'
-            className='text-link underline decoration-link/30 underline-offset-2 hover:decoration-current'
-          >
-            {match[0]}
-          </a>
         </Fragment>
       ))}
-      {body.slice(
-        links.length
-          ? (links.at(-1)?.index ?? 0) + (links.at(-1)?.[0].length ?? 0)
-          : 0,
-      )}
+      {display.text.slice(tokens.at(-1)?.end ?? 0)}
     </div>
   );
 };
@@ -110,6 +138,7 @@ export const MessageItem = ({
   onChannel,
   showChannel = false,
   inThread = false,
+  highlighted = false,
 }: {
   item: Message;
   userId: string;
@@ -117,6 +146,7 @@ export const MessageItem = ({
   onChannel: (id: string) => void;
   showChannel?: boolean;
   inThread?: boolean;
+  highlighted?: boolean;
 }) => {
   const [editing, setEditing] = useState(false);
   const [editBody, setEditBody] = useState(item.body);
@@ -142,7 +172,11 @@ export const MessageItem = ({
   };
   return (
     <article
-      className='message-item group'
+      className={cn(
+        'message-item group',
+        highlighted && 'bg-brand-soft ring-1 ring-inset ring-primary/25',
+      )}
+      data-message-id={item.id}
       aria-label={`${item.author} の投稿`}
     >
       <UserAvatar name={item.author} />
@@ -191,10 +225,10 @@ export const MessageItem = ({
               }
             }}
           >
-            <Textarea
+            <MentionTextarea
               aria-label='投稿を編集'
               value={editBody}
-              onChange={(event) => setEditBody(event.target.value)}
+              onValueChange={setEditBody}
               maxLength={MESSAGE_LIMIT}
               className='text-base'
             />
@@ -218,7 +252,7 @@ export const MessageItem = ({
             </div>
           </form>
         ) : (
-          <MessageBody body={item.body} />
+          <MessageBody body={item.body} mentions={item.mentions} />
         )}
         <MessageAttachments files={item.attachments} />
         {item.reactions.length > 0 && (

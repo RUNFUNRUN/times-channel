@@ -6,6 +6,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import {
+  Bell,
   Bookmark,
   ChevronDown,
   Hash,
@@ -28,6 +29,7 @@ import { AuthScreen } from '@/components/auth-screen';
 import { Composer } from '@/components/composer';
 import { EditChannelDialog } from '@/components/edit-channel-dialog';
 import { MessageItem, UserAvatar } from '@/components/message-item';
+import { NotificationsPanel } from '@/components/notifications-panel';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -63,6 +65,7 @@ import {
   type Channel,
   client,
   type MessagePage,
+  type NotificationItem,
   readResponse,
   type Thread,
   type Workspace,
@@ -74,6 +77,7 @@ type View =
   | { kind: 'all' }
   | { kind: 'channel'; id: string }
   | { kind: 'saved' }
+  | { kind: 'notifications' }
   | { kind: 'search'; q: string };
 const dayLabel = (timestamp: number) =>
   new Date(timestamp).toLocaleDateString('ja-JP', {
@@ -139,6 +143,16 @@ const WorkspaceApp = () => {
       readResponse<Workspace>(await client.api.workspace.$get()),
     refetchInterval: 30000,
   });
+  const notifications = useQuery({
+    queryKey: ['notifications', 'count'],
+    queryFn: async () =>
+      readResponse<{ unreadCount: number }>(
+        await client.api.notifications['unread-count'].$get(),
+      ),
+    refetchInterval: 10000,
+  });
+  const unreadCount = notifications.data?.unreadCount ?? 0;
+  const [threadFocusId, setThreadFocusId] = useState<string>();
   const [view, setView] = useState<View>({ kind: 'all' });
   const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -152,6 +166,7 @@ const WorkspaceApp = () => {
   const changeView = useCallback((next: View) => {
     setView(next);
     setThreadId(null);
+    setThreadFocusId(undefined);
     setSidebarOpen(false);
     setEditOpen(false);
   }, []);
@@ -189,13 +204,24 @@ const WorkspaceApp = () => {
     (item) => item.ownerId === data.user.id,
   );
   const openChannel = (id: string) => changeView({ kind: 'channel', id });
+  const openThread = (id: string) => {
+    setThreadFocusId(undefined);
+    setThreadId(id);
+  };
+  const openNotification = (item: NotificationItem) => {
+    changeView({ kind: 'channel', id: item.channelId });
+    setThreadId(item.threadId);
+    setThreadFocusId(item.messageId);
+  };
   const title =
     currentChannel?.name ??
-    (view.kind === 'saved'
-      ? '後で読む'
-      : view.kind === 'search'
-        ? `「${view.q}」の検索結果`
-        : 'みんなのタイムライン');
+    (view.kind === 'notifications'
+      ? '通知'
+      : view.kind === 'saved'
+        ? '後で読む'
+        : view.kind === 'search'
+          ? `「${view.q}」の検索結果`
+          : 'みんなのタイムライン');
   const favoriteChannel = async () => {
     if (!currentChannel || starPending) return;
     setStarPending(true);
@@ -254,6 +280,22 @@ const WorkspaceApp = () => {
           >
             <Home className='size-4' />
             みんなのタイムライン
+          </button>
+          <button
+            type='button'
+            className={cn(
+              'sidebar-nav',
+              view.kind === 'notifications' && 'active',
+            )}
+            onClick={() => changeView({ kind: 'notifications' })}
+          >
+            <Bell className='size-4' />
+            通知
+            {unreadCount > 0 && (
+              <span className='ml-auto rounded-full bg-primary px-2 text-xs text-primary-foreground'>
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
           </button>
           <button
             type='button'
@@ -408,19 +450,33 @@ const WorkspaceApp = () => {
         <nav className='app-rail' aria-label='アプリ'>
           <button
             type='button'
-            className='rail-workspace'
-            aria-label='タイムラインを開く'
-            onClick={() => changeView({ kind: 'all' })}
-          >
-            t<span className='text-[#c3e8b6]'>.</span>
-          </button>
-          <button
-            type='button'
-            className={cn('rail-item', view.kind !== 'saved' && 'active')}
+            className={cn(
+              'rail-item',
+              view.kind !== 'saved' &&
+                view.kind !== 'notifications' &&
+                'active',
+            )}
             onClick={() => changeView({ kind: 'all' })}
           >
             <Home />
             <span>ホーム</span>
+          </button>
+          <button
+            type='button'
+            className={cn(
+              'rail-item relative',
+              view.kind === 'notifications' && 'active',
+            )}
+            aria-label={unreadCount ? `通知 ${unreadCount}件の未読` : '通知'}
+            onClick={() => changeView({ kind: 'notifications' })}
+          >
+            <Bell />
+            <span>通知</span>
+            {unreadCount > 0 && (
+              <span className='absolute -right-2 -top-1 rounded-full bg-primary px-1.5 font-semibold text-primary-foreground'>
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
           </button>
           <button
             type='button'
@@ -464,6 +520,8 @@ const WorkspaceApp = () => {
               <h2 className='flex items-center gap-2 truncate text-lg font-bold'>
                 {currentChannel ? (
                   <Hash className='size-5 shrink-0 text-muted-foreground' />
+                ) : view.kind === 'notifications' ? (
+                  <Bell className='size-5 shrink-0 text-primary' />
                 ) : view.kind === 'saved' ? (
                   <Bookmark className='size-5 shrink-0 text-primary' />
                 ) : view.kind === 'search' ? (
@@ -476,11 +534,13 @@ const WorkspaceApp = () => {
               <p className='mt-1 truncate text-xs text-muted-foreground'>
                 {currentChannel
                   ? currentChannel.description
-                  : view.kind === 'saved'
-                    ? '保存した投稿は自分だけに表示されます。'
-                    : view.kind === 'search'
-                      ? 'すべてのチャンネルとスレッドから検索'
-                      : '全チャンネルの投稿'}
+                  : view.kind === 'notifications'
+                    ? 'メンション・返信・リアクション'
+                    : view.kind === 'saved'
+                      ? '保存した投稿は自分だけに表示されます。'
+                      : view.kind === 'search'
+                        ? 'すべてのチャンネルとスレッドから検索'
+                        : '全チャンネルの投稿'}
               </p>
             </div>
             {currentChannel?.ownerId === data.user.id && (
@@ -540,11 +600,13 @@ const WorkspaceApp = () => {
           <div className='channel-tabs'>
             <span className='channel-tab'>
               <MessageCircle className='size-3.5' />
-              {view.kind === 'saved'
-                ? '保存した投稿'
-                : view.kind === 'search'
-                  ? '検索結果'
-                  : 'メッセージ'}
+              {view.kind === 'notifications'
+                ? '通知'
+                : view.kind === 'saved'
+                  ? '保存した投稿'
+                  : view.kind === 'search'
+                    ? '検索結果'
+                    : 'メッセージ'}
             </span>
             {currentChannel?.ownerId === data.user.id && (
               <span className='ml-auto flex items-center gap-1.5 text-xs text-muted-foreground'>
@@ -569,16 +631,23 @@ const WorkspaceApp = () => {
               </Button>
             </div>
           )}
-          <Timeline
-            key={JSON.stringify(view)}
-            view={view}
-            user={data.user}
-            onThread={setThreadId}
-            onChannel={openChannel}
-            onOwnChannel={() => {
-              if (ownChannel) openChannel(ownChannel.id);
-            }}
-          />
+          {view.kind === 'notifications' ? (
+            <NotificationsPanel
+              unreadCount={unreadCount}
+              onOpen={openNotification}
+            />
+          ) : (
+            <Timeline
+              key={JSON.stringify(view)}
+              view={view}
+              user={data.user}
+              onThread={openThread}
+              onChannel={openChannel}
+              onOwnChannel={() => {
+                if (ownChannel) openChannel(ownChannel.id);
+              }}
+            />
+          )}
           {currentChannel ? (
             <Composer
               key={currentChannel.id}
@@ -603,6 +672,7 @@ const WorkspaceApp = () => {
           <ThreadPanel
             key={threadId}
             id={threadId}
+            focusId={threadFocusId}
             userId={data.user.id}
             onClose={() => setThreadId(null)}
             onChannel={openChannel}
@@ -835,11 +905,13 @@ const Timeline = ({
 const ThreadPanel = ({
   id,
   userId,
+  focusId,
   onClose,
   onChannel,
 }: {
   id: string;
   userId: string;
+  focusId?: string;
   onClose: () => void;
   onChannel: (id: string) => void;
 }) => {
@@ -859,9 +931,25 @@ const ThreadPanel = ({
     thread.data?.messages.filter((item) => item.id !== thread.data?.parentId) ??
     [];
   const end = useRef<HTMLDivElement>(null);
+  const threadList = useRef<HTMLDivElement>(null);
+  const focused = useRef<string | undefined>(undefined);
+  const parentId = parent?.id;
+  const lastReplyAuthor = replies.at(-1)?.userId;
   useEffect(() => {
-    if (replies.length) end.current?.scrollIntoView({ block: 'nearest' });
-  }, [replies.length]);
+    if (!parentId) return;
+    if (focusId && focused.current !== focusId) {
+      const target = threadList.current?.querySelector(
+        `[data-message-id="${CSS.escape(focusId)}"]`,
+      );
+      if (target) {
+        target.scrollIntoView({ block: 'center' });
+        focused.current = focusId;
+        return;
+      }
+    }
+    if (replies.length && (!focusId || lastReplyAuthor === userId))
+      end.current?.scrollIntoView({ block: 'nearest' });
+  }, [replies.length, parentId, focusId, lastReplyAuthor, userId]);
   return (
     <aside className='thread-panel' aria-label='スレッド'>
       <header className='thread-header'>
@@ -875,7 +963,7 @@ const ThreadPanel = ({
           <X />
         </Button>
       </header>
-      <div className='min-h-0 flex-1 overflow-y-auto py-3'>
+      <div ref={threadList} className='min-h-0 flex-1 overflow-y-auto py-3'>
         {thread.isPending && (
           <div className='flex justify-center p-8'>
             <LoaderCircle className='size-5 animate-spin text-muted-foreground' />
@@ -892,6 +980,7 @@ const ThreadPanel = ({
         {parent && (
           <MessageItem
             item={parent}
+            highlighted={parent.id === focusId}
             userId={userId}
             onThread={() => {}}
             onChannel={onChannel}
@@ -909,6 +998,7 @@ const ThreadPanel = ({
           <MessageItem
             key={item.id}
             item={item}
+            highlighted={item.id === focusId}
             userId={userId}
             onThread={() => {}}
             onChannel={onChannel}

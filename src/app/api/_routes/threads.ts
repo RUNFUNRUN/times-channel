@@ -2,6 +2,7 @@ import { and, asc, eq, exists, inArray, or } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { getAttachments } from '@/app/api/_lib/attachments';
+import { getMessageMentions } from '@/app/api/_lib/message-events';
 import type { ApiEnv } from '@/app/api/_lib/types';
 import { bookmark, channel, message, reaction, user } from '@/lib/schema';
 
@@ -59,11 +60,16 @@ export const threadsRoutes = new Hono<ApiEnv>().get(
       db,
       rows.map((row) => row.id),
     );
+    const mentions = await getMessageMentions(
+      db,
+      rows.map((row) => row.id),
+    );
     return c.json({
       parentId,
       messages: rows.map((row) => ({
         ...row,
         saved: Boolean(row.saved),
+        mentions: mentions.filter((item) => item.messageId === row.id),
         attachments: attachments.filter((item) => item.messageId === row.id),
         replyCount: row.id === parentId ? rows.length - 1 : 0,
         reactions: reactions
