@@ -44,6 +44,7 @@ export const notificationsRoutes = new Hono<ApiEnv>()
           createdAt: notification.createdAt,
           readAt: notification.readAt,
           actorName: user.name,
+          actorImage: user.image,
           messageId: message.id,
           parentId: message.parentId,
           body: message.body,

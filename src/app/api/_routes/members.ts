@@ -6,7 +6,12 @@ import { user } from '@/lib/schema';
 export const membersRoutes = new Hono<ApiEnv>().get('/', async (c) =>
   c.json({
     members: await c.var.db
-      .select({ id: user.id, name: user.name, email: user.email })
+      .select({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        image: user.image,
+      })
       .from(user)
       .orderBy(asc(user.name), asc(user.email)),
   }),

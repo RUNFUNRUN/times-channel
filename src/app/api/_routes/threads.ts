@@ -27,6 +27,7 @@ export const threadsRoutes = new Hono<ApiEnv>().get(
         parentId: message.parentId,
         userId: message.userId,
         author: user.name,
+        authorImage: user.image,
         channelName: channel.name,
         createdAt: message.createdAt,
         updatedAt: message.updatedAt,

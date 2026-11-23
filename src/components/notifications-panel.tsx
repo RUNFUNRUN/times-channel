@@ -16,9 +16,9 @@ import {
   Smile,
 } from 'lucide-react';
 import { useState } from 'react';
-import { UserAvatar } from '@/components/message-item';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { UserAvatar } from '@/components/user-avatar';
 import { useRealtimeInterval } from '@/hooks/use-realtime';
 import {
   type ApiResponse,
@@ -170,7 +170,7 @@ export const NotificationsPanel = ({
                 }}
               >
                 <div className='relative shrink-0'>
-                  <UserAvatar name={item.actorName} />
+                  <UserAvatar name={item.actorName} image={item.actorImage} />
                   <span className='absolute -right-1 -bottom-1 rounded-full bg-background p-1 text-primary ring-1 ring-border'>
                     <Icon className='size-3' />
                   </span>

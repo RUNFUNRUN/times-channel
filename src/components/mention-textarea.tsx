@@ -8,6 +8,7 @@ import {
   PopoverContent,
 } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
+import { UserAvatar } from '@/components/user-avatar';
 import { useRealtimeInterval } from '@/hooks/use-realtime';
 import { client, type Members, readResponse } from '@/lib/api-client';
 import {
@@ -198,15 +199,22 @@ export const MentionTextarea = ({
               onMouseEnter={() => setActive(index)}
               onClick={() => choose(member)}
               className={cn(
-                'flex w-full flex-col gap-0.5 rounded-md px-3 py-2 text-left',
+                'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left',
                 index === selected && 'bg-accent text-accent-foreground',
               )}
             >
-              <span className='truncate text-sm font-semibold'>
-                {member.name}
-              </span>
-              <span className='truncate text-xs text-muted-foreground'>
-                {member.email}
+              <UserAvatar
+                name={member.name}
+                image={member.image}
+                className='size-8'
+              />
+              <span className='min-w-0'>
+                <span className='block truncate text-sm font-semibold'>
+                  {member.name}
+                </span>
+                <span className='block truncate text-xs text-muted-foreground'>
+                  {member.email}
+                </span>
               </span>
             </button>
           ))}

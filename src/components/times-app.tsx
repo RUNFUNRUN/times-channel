@@ -28,8 +28,9 @@ import { AppearanceDialog } from '@/components/appearance-dialog';
 import { AuthScreen } from '@/components/auth-screen';
 import { Composer } from '@/components/composer';
 import { EditChannelDialog } from '@/components/edit-channel-dialog';
-import { MessageItem, UserAvatar } from '@/components/message-item';
+import { MessageItem } from '@/components/message-item';
 import { NotificationsPanel } from '@/components/notifications-panel';
+import { ProfileDialog } from '@/components/profile-dialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -61,6 +62,7 @@ import {
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { UserAvatar } from '@/components/user-avatar';
 import {
   RealtimeContext,
   useRealtime,
@@ -162,6 +164,7 @@ const WorkspaceApp = () => {
   const [view, setView] = useState<View>({ kind: 'all' });
   const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [threadId, setThreadId] = useState<string | null>(null);
@@ -371,7 +374,11 @@ const WorkspaceApp = () => {
             className='sidebar-account'
             aria-label='アカウントメニュー'
           >
-            <UserAvatar name={data.user.name} className='size-9' />
+            <UserAvatar
+              name={data.user.name}
+              image={data.user.image}
+              className='size-9'
+            />
             <span className='min-w-0 flex-1 text-left'>
               <span className='block truncate text-sm font-semibold'>
                 {data.user.name}
@@ -391,6 +398,10 @@ const WorkspaceApp = () => {
             </span>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => setProfileOpen(true)}>
+            <Pencil />
+            プロフィールを編集
+          </DropdownMenuItem>
           {ownChannel && (
             <DropdownMenuItem onSelect={() => openChannel(ownChannel.id)}>
               <Hash />
@@ -495,7 +506,11 @@ const WorkspaceApp = () => {
               <span>後で読む</span>
             </button>
             <div className='mt-auto pb-4'>
-              <UserAvatar name={data.user.name} className='size-9' />
+              <UserAvatar
+                name={data.user.name}
+                image={data.user.image}
+                className='size-9'
+              />
             </div>
           </nav>
           <aside className='desktop-sidebar' aria-label='チャンネル一覧'>
@@ -689,6 +704,9 @@ const WorkspaceApp = () => {
             />
           )}
         </div>
+        {profileOpen && (
+          <ProfileDialog user={data.user} onOpenChange={setProfileOpen} />
+        )}
         <CreateChannelDialog
           open={createOpen}
           onOpenChange={setCreateOpen}

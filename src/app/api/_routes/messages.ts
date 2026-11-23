@@ -76,6 +76,7 @@ export const messagesRoutes = new Hono<ApiEnv>()
           createdAt: message.createdAt,
           updatedAt: message.updatedAt,
           author: user.name,
+          authorImage: user.image,
           channelName: channel.name,
           replyCount: sql<number>`(select count(*) from message reply where reply.parent_id = ${message.id})`,
           saved: exists(

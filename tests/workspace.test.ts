@@ -94,7 +94,7 @@ afterAll(async () => {
   // Remove only this run's fixtures from Wrangler's default local D1 state.
   // No remote option is accepted here or in TEST_BASE_URL.
   const emailList = emails.map((email) => `'${email}'`).join(',');
-  const cleanup = `INSERT OR IGNORE INTO file_cleanup (object_key) SELECT attachment.object_key FROM attachment JOIN message ON attachment.message_id = message.id JOIN channel ON message.channel_id = channel.id WHERE channel.name = '${channelName}' OR message.user_id IN (SELECT id FROM user WHERE email IN (${emailList})); DELETE FROM channel WHERE name = '${channelName}' OR owner_id IN (SELECT id FROM user WHERE email IN (${emailList})); DELETE FROM user WHERE email IN (${emailList}) OR id IN (${mentionFixtureIds.map((id) => `'${id}'`).join(',')});`;
+  const cleanup = `INSERT OR IGNORE INTO file_cleanup (object_key) SELECT attachment.object_key FROM attachment JOIN message ON attachment.message_id = message.id JOIN channel ON message.channel_id = channel.id WHERE channel.name = '${channelName}' OR message.user_id IN (SELECT id FROM user WHERE email IN (${emailList})); INSERT OR IGNORE INTO file_cleanup (object_key) SELECT 'avatars/' || substr(image, 21) FROM user WHERE email IN (${emailList}) AND image LIKE '/api/profile/avatar/%'; DELETE FROM channel WHERE name = '${channelName}' OR owner_id IN (SELECT id FROM user WHERE email IN (${emailList})); DELETE FROM user WHERE email IN (${emailList}) OR id IN (${mentionFixtureIds.map((id) => `'${id}'`).join(',')});`;
   execFileSync(
     'bunx',
     ['wrangler', 'd1', 'execute', 'DB', '--local', '--command', cleanup],
@@ -340,6 +340,7 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
   expect(Object.keys(memberList.members[0]).sort()).toEqual([
     'email',
     'id',
+    'image',
     'name',
   ]);
   const mentionBody = `<@${second.user.id}> <@${second.user.id}> <@${workspace.user.id}> notification`;
@@ -645,6 +646,150 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
   const pong = waitForSocketMessage(socketA, (data) => data === 'pong');
   socketA.send('ping');
   expect(await pong).toBe('pong');
+  const saveProfile = (
+    name: string,
+    avatar?: File,
+    remove = false,
+    actor = 0,
+  ) => {
+    const form = new FormData();
+    form.set('name', name);
+    if (avatar) form.set('avatar', avatar);
+    if (remove) form.set('removeAvatar', 'true');
+    // Extra identity fields must never grant access to another user's profile.
+    form.set('userId', workspace.user.id);
+    return fetch(`${baseURL}/api/profile`, {
+      method: 'PATCH',
+      headers: { Origin: baseURL, Cookie: cookies[actor] ?? '' },
+      body: form,
+    });
+  };
+  expect((await fetch(`${baseURL}/api/profile`)).status).toBe(401);
+  expect((await saveProfile('anonymous', undefined, false, 99)).status).toBe(
+    401,
+  );
+  expect((await saveProfile('   ')).status).toBe(400);
+  expect((await saveProfile('x'.repeat(41))).status).toBe(400);
+  expect(
+    (
+      await saveProfile(
+        'QA 0',
+        new File(['<svg onload="alert(1)"></svg>'], 'fake.png', {
+          type: 'image/png',
+        }),
+      )
+    ).status,
+  ).toBe(400);
+  expect(
+    (
+      await saveProfile(
+        'QA 0',
+        new File([], 'empty.png', { type: 'image/png' }),
+      )
+    ).status,
+  ).toBe(400);
+  expect(
+    (
+      await saveProfile(
+        'QA 0',
+        new File([new Uint8Array(2 * 1024 * 1024 + 1)], 'large.png', {
+          type: 'image/png',
+        }),
+      )
+    ).status,
+  ).toBe(400);
+  const avatar = new File(
+    [
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/S9sAAAAASUVORK5CYII=',
+        'base64',
+      ),
+    ],
+    'avatar.png',
+    { type: 'image/png' },
+  );
+  const savedProfile = await withRealtimeEvent(socketB, 'workspace', () =>
+    saveProfile('変更した表示名', avatar),
+  );
+  expect(savedProfile.response.status).toBe(200);
+  type Profile = {
+    id: string;
+    name: string;
+    email: string;
+    image: string | null;
+  };
+  const profile = ((await savedProfile.response.json()) as { user: Profile })
+    .user;
+  expect(profile.id).toBe(workspace.user.id);
+  expect(profile.name).toBe('変更した表示名');
+  expect(profile.image).toMatch(/^\/api\/profile\/avatar\/[a-f0-9-]{36}$/);
+  const avatarResponse = await request(
+    profile.image?.replace('/api', '') ?? '',
+    { actor: 1 },
+  );
+  expect(avatarResponse.status).toBe(200);
+  expect(avatarResponse.headers.get('content-type')).toBe('image/png');
+  expect(new Uint8Array(await avatarResponse.arrayBuffer())).toEqual(
+    new Uint8Array(await avatar.arrayBuffer()),
+  );
+  expect((await fetch(`${baseURL}${profile.image}`)).status).toBe(401);
+  expect((await saveProfile('QA 1', undefined, false, 1)).status).toBe(200);
+  expect(
+    ((await (await request('/profile')).json()) as { user: Profile }).user.name,
+  ).toBe('変更した表示名');
+  const sessionProfile = (await (
+    await request('/auth/get-session')
+  ).json()) as { user: Profile };
+  expect(sessionProfile.user.name).toBe('変更した表示名');
+  expect(sessionProfile.user.image).toBe(profile.image);
+  const previousPost = (
+    (await (
+      await request(`/messages/${ownPost.message.id}/thread`)
+    ).json()) as Page
+  ).messages.find((item) => item.id === ownPost.message.id) as Post & {
+    author: string;
+    authorImage: string | null;
+  };
+  expect(previousPost.author).toBe('変更した表示名');
+  expect(previousPost.authorImage).toBe(profile.image);
+  const updatedMembers = (
+    (await (await request('/members', { actor: 1 })).json()) as {
+      members: Profile[];
+    }
+  ).members;
+  expect(
+    updatedMembers.find((item) => item.id === workspace.user.id)?.image,
+  ).toBe(profile.image);
+  const currentWorkspace = (await (
+    await request('/workspace')
+  ).json()) as typeof workspace & { user: Profile };
+  expect(currentWorkspace.user.image).toBe(profile.image);
+  const replacement = (
+    (await (await saveProfile('変更した表示名', avatar)).json()) as {
+      user: Profile;
+    }
+  ).user;
+  expect(replacement.image).not.toBe(profile.image);
+  expect(
+    (
+      await fetch(`${baseURL}${profile.image}`, {
+        headers: { Cookie: cookies[0] },
+      })
+    ).status,
+  ).toBe(404);
+  expect((await saveProfile('QA 0', undefined, true)).status).toBe(200);
+  expect(
+    ((await (await request('/profile')).json()) as { user: Profile }).user
+      .image,
+  ).toBeNull();
+  expect(
+    (
+      await fetch(`${baseURL}${replacement.image}`, {
+        headers: { Cookie: cookies[0] },
+      })
+    ).status,
+  ).toBe(404);
+
   const createdRealtime = await withRealtimeEvent(socketB, 'messages', () =>
     request('/messages', {
       method: 'POST',
