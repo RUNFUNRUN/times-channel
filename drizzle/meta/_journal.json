@@ -36,6 +36,13 @@
       "when": 1795457713884,
       "tag": "0004_brave_wrecking_crew",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1795516971183,
+      "tag": "0005_sticky_thunderbolts",
+      "breakpoints": true
     }
   ]
 }

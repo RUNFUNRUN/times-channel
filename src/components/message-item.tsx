@@ -7,6 +7,7 @@ import {
   MessageSquare,
   MoreHorizontal,
   Pencil,
+  Quote,
   SmilePlus,
   Trash2,
 } from 'lucide-react';
@@ -15,6 +16,9 @@ import { MarkdownPreview } from '@/components/markdown-preview';
 import { MentionTextarea } from '@/components/mention-textarea';
 import { MessageAttachments } from '@/components/message-attachments';
 import { MessageMarkdown } from '@/components/message-markdown';
+import { QuoteCard } from '@/components/quote-card';
+import { QuoteDialog } from '@/components/quote-dialog';
+import { ShareLink } from '@/components/share-link';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -44,6 +48,7 @@ import { UserAvatar } from '@/components/user-avatar';
 import { useMessageAction } from '@/hooks/use-message-action';
 import { type ApiResponse, client, type Message } from '@/lib/api-client';
 import { MESSAGE_LIMIT, REACTIONS } from '@/lib/constants';
+import { messagePath } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 
 export const MessageItem = ({
@@ -63,6 +68,7 @@ export const MessageItem = ({
   inThread?: boolean;
   highlighted?: boolean;
 }) => {
+  const [quoting, setQuoting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editPreview, setEditPreview] = useState(false);
   const [editBody, setEditBody] = useState(item.body);
@@ -174,7 +180,7 @@ export const MessageItem = ({
                 type='submit'
                 disabled={
                   action.isPending ||
-                  (!editBody.trim() && !item.attachments.length)
+                  (!editBody.trim() && !item.attachments.length && !item.quote)
                 }
               >
                 保存する
@@ -190,6 +196,7 @@ export const MessageItem = ({
             }))}
           />
         )}
+        {item.quote && <QuoteCard quote={item.quote} />}
         <MessageAttachments files={item.attachments} />
         {item.reactions.length > 0 && (
           <div className='mt-2 flex flex-wrap gap-1.5'>
@@ -270,6 +277,16 @@ export const MessageItem = ({
               ))}
             </PopoverContent>
           </Popover>
+          <ShareLink path={messagePath(item.id)} label='投稿を共有' />
+          <Button
+            size='icon-sm'
+            variant='ghost'
+            aria-label='投稿を引用'
+            title='投稿を引用'
+            onClick={() => setQuoting(true)}
+          >
+            <Quote />
+          </Button>
           {!inThread && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -277,7 +294,7 @@ export const MessageItem = ({
                   size='icon-sm'
                   variant='ghost'
                   aria-label='スレッドで返信'
-                  onClick={() => onThread(item.parentId ?? item.id)}
+                  onClick={() => onThread(item.id)}
                 >
                   <MessageSquare />
                 </Button>
@@ -343,6 +360,9 @@ export const MessageItem = ({
             </DropdownMenu>
           )}
         </div>
+      )}
+      {quoting && (
+        <QuoteDialog item={item} userId={userId} onOpenChange={setQuoting} />
       )}
       <Dialog open={deleting} onOpenChange={setDeleting}>
         <DialogContent>

@@ -998,3 +998,15 @@ a:focus-visible {
   background: var(--muted);
   font-weight: 600;
 }
+
+/* A permalink uses the same thread UI in the main pane, including on mobile. */
+.thread-panel.thread-page {
+  position: static;
+  width: 100%;
+  max-width: none;
+  flex: 1;
+  min-height: 0;
+  border-left: 0;
+  border-radius: 0;
+  box-shadow: none;
+}

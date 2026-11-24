@@ -26,6 +26,11 @@ import {
   notificationRecord,
   resolveMentions,
 } from '@/app/api/_lib/message-events';
+import {
+  getMessageQuotes,
+  quoteWrites,
+  validateQuote,
+} from '@/app/api/_lib/quotes';
 import type { ApiEnv } from '@/app/api/_lib/types';
 import { MESSAGE_LIMIT, REACTIONS } from '@/lib/constants';
 import {
@@ -35,13 +40,14 @@ import {
   fileCleanup,
   message,
   messageMention,
+  messageQuote,
   notification,
   reaction,
   user,
 } from '@/lib/schema';
 
 const bodySchema = z.object({
-  body: z.string().trim().min(1).max(MESSAGE_LIMIT),
+  body: z.string().trim().max(MESSAGE_LIMIT),
 });
 const mentionedUser = alias(user, 'mentioned_user');
 
@@ -159,6 +165,10 @@ export const messagesRoutes = new Hono<ApiEnv>()
         db,
         selected.map((row) => row.id),
       );
+      const quotes = await getMessageQuotes(
+        db,
+        selected.map((row) => row.id),
+      );
       const reactions = selected.length
         ? await db
             .select()
@@ -174,6 +184,7 @@ export const messagesRoutes = new Hono<ApiEnv>()
         messages: selected.map((row) => ({
           ...row,
           saved: Boolean(row.saved),
+          quote: quotes.find((item) => item.messageId === row.id) ?? null,
           mentions: mentions.filter((item) => item.messageId === row.id),
           attachments: attachments.filter((item) => item.messageId === row.id),
           reactions: reactions
@@ -188,13 +199,19 @@ export const messagesRoutes = new Hono<ApiEnv>()
     '/',
     zValidator(
       'json',
-      bodySchema.extend({
-        channelId: z.string().min(1),
-        parentId: z.string().optional(),
-      }),
+      bodySchema
+        .extend({
+          channelId: z.string().min(1),
+          parentId: z.string().optional(),
+          quoteId: z.string().min(1).max(128).optional(),
+        })
+        .refine((input) => Boolean(input.body || input.quoteId), {
+          message: '本文または引用元が必要です。',
+        }),
     ),
     async (c) => {
-      const input = c.req.valid('json');
+      const { quoteId, ...input } = c.req.valid('json');
+      await validateQuote(c.var.db, quoteId);
       const parent = await validateMessageTarget(c.var.db, input);
       const mentionIds = await resolveMentions(c.var.db, input.body);
       const id = crypto.randomUUID();
@@ -204,6 +221,7 @@ export const messagesRoutes = new Hono<ApiEnv>()
           .insert(message)
           .values({ ...input, id, userId: c.var.user.id, createdAt })
           .returning(),
+        ...quoteWrites(c.var.db, id, quoteId),
         ...messageEventWrites(c.var.db, {
           messageId: id,
           actorId: c.var.user.id,
@@ -237,7 +255,14 @@ export const messagesRoutes = new Hono<ApiEnv>()
         });
       if (
         !c.req.valid('json').body &&
-        !(await getAttachments(c.var.db, [target.id])).length
+        !(await getAttachments(c.var.db, [target.id])).length &&
+        !(
+          await c.var.db
+            .select()
+            .from(messageQuote)
+            .where(eq(messageQuote.messageId, target.id))
+            .limit(1)
+        ).length
       )
         throw new HTTPException(400, { message: '本文を入力してください。' });
       const body = c.req.valid('json').body;

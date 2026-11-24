@@ -12,6 +12,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { MarkdownPreview } from '@/components/markdown-preview';
 import { MentionTextarea } from '@/components/mention-textarea';
+import { QuoteCard } from '@/components/quote-card';
 import { Button } from '@/components/ui/button';
 import {
   Popover,
@@ -19,7 +20,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { useMessageAction } from '@/hooks/use-message-action';
-import { client } from '@/lib/api-client';
+import { client, type Message } from '@/lib/api-client';
 import { MESSAGE_LIMIT, REACTIONS } from '@/lib/constants';
 import { formatFileSize, validateFiles } from '@/lib/files';
 
@@ -28,13 +29,17 @@ export const Composer = ({
   channelName,
   userId,
   parentId,
+  quote,
+  onSent,
 }: {
   channelId: string;
   channelName: string;
   userId: string;
   parentId?: string;
+  quote?: NonNullable<Message['quote']>;
+  onSent?: () => void;
 }) => {
-  const storageKey = `times:draft:${userId}:${channelId}:${parentId ?? 'root'}`;
+  const storageKey = `times:draft:${userId}:${channelId}:${parentId ?? 'root'}${quote?.source ? `:quote:${quote.source.id}` : ''}`;
   const [draft, setDraft] = useState<string | null>(null);
   const [preview, setPreview] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -60,7 +65,8 @@ export const Composer = ({
     }
   }, [draft, storageKey]);
   const send = async () => {
-    if ((!draft?.trim() && !files.length) || action.isPending) return;
+    if ((!draft?.trim() && !files.length && !quote?.source) || action.isPending)
+      return;
     setFileError('');
     try {
       await action.mutateAsync(() =>
@@ -70,16 +76,28 @@ export const Composer = ({
                 body: draft?.trim() ?? '',
                 channelId,
                 parentId,
+                quoteId: quote?.source?.id,
                 files: files.map((item) => item.file),
               },
             })
           : client.api.messages.$post({
-              json: { body: draft?.trim() ?? '', channelId, parentId },
+              json: {
+                body: draft?.trim() ?? '',
+                channelId,
+                parentId,
+                quoteId: quote?.source?.id,
+              },
             }),
       );
       setDraft('');
       setFiles([]);
       setPreview(false);
+      try {
+        localStorage.removeItem(storageKey);
+      } catch {
+        /* Storage is optional. */
+      }
+      onSent?.();
       requestAnimationFrame(() => input.current?.focus());
     } catch {
       /* The mutation error is displayed below the editor. */
@@ -95,6 +113,11 @@ export const Composer = ({
           void send();
         }}
       >
+        {quote && (
+          <div className='px-3 pt-2'>
+            <QuoteCard quote={quote} />
+          </div>
+        )}
         {preview && <MarkdownPreview body={draft ?? ''} />}
         <div hidden={preview}>
           <MentionTextarea
@@ -263,7 +286,7 @@ export const Composer = ({
               type='submit'
               disabled={
                 draft === null ||
-                (!draft?.trim() && !files.length) ||
+                (!draft?.trim() && !files.length && !quote?.source) ||
                 action.isPending
               }
               className='bg-primary px-3 text-primary-foreground hover:bg-primary/85'

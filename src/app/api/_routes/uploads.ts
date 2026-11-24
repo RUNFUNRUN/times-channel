@@ -15,6 +15,7 @@ import {
   messageEventWrites,
   resolveMentions,
 } from '@/app/api/_lib/message-events';
+import { quoteWrites, validateQuote } from '@/app/api/_lib/quotes';
 import type { ApiEnv } from '@/app/api/_lib/types';
 import {
   MAX_ATTACHMENTS,
@@ -37,6 +38,7 @@ export const uploadsRoutes = new Hono<ApiEnv>()
       z.object({
         channelId: z.string().min(1),
         parentId: z.string().optional(),
+        quoteId: z.string().min(1).max(128).optional(),
         body: z.string().trim().max(MESSAGE_LIMIT).default(''),
         files: z
           .union([z.instanceof(File), z.array(z.instanceof(File))])
@@ -45,7 +47,8 @@ export const uploadsRoutes = new Hono<ApiEnv>()
       }),
     ),
     async (c) => {
-      const { files, ...input } = c.req.valid('form');
+      const { files, quoteId, ...input } = c.req.valid('form');
+      await validateQuote(c.var.db, quoteId);
       const invalid = validateFiles(files);
       if (invalid) throw new HTTPException(400, { message: invalid });
       const parent = await validateMessageTarget(c.var.db, input);
@@ -85,6 +88,7 @@ export const uploadsRoutes = new Hono<ApiEnv>()
             })
             .returning(),
           c.var.db.insert(attachment).values(attachments),
+          ...quoteWrites(c.var.db, messageId, quoteId),
           ...messageEventWrites(c.var.db, {
             messageId,
             actorId: c.var.user.id,

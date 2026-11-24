@@ -32,11 +32,13 @@ const upload = async (
   parentId?: string,
   actor = 0,
   body = '',
+  quoteId?: string,
 ) => {
   const form = new FormData();
   form.set('channelId', channelId);
   form.set('body', body);
   if (parentId) form.set('parentId', parentId);
+  if (quoteId) form.set('quoteId', quoteId);
   for (const file of files) form.append('files', file);
   const result = await fetch(`${baseURL}/api/uploads`, {
     method: 'POST',
@@ -74,6 +76,17 @@ type Post = {
   channelName: string;
   reactions: { emoji: string; userId: string }[];
   saved: boolean;
+  quote: {
+    messageId: string;
+    source: {
+      id: string;
+      body: string;
+      author: string;
+      channelId: string;
+      mentions: { userId: string; name: string }[];
+      attachmentNames: string[];
+    } | null;
+  } | null;
   mentions: { userId: string; name: string }[];
   attachments: {
     id: string;
@@ -105,6 +118,18 @@ afterAll(async () => {
 test('D1 workspace: authentication, ownership, threads, search, reactions, bookmarks and pagination', async () => {
   const unauthenticated = await fetch(`${baseURL}/api/messages`);
   expect(unauthenticated.status).toBe(401);
+  expect((await fetch(`${baseURL}/api/messages/missing/thread`)).status).toBe(
+    401,
+  );
+  for (const path of [
+    '/notifications',
+    '/saved',
+    '/search?q=hello',
+    '/channels/general',
+    '/messages/missing',
+  ]) {
+    expect((await fetch(`${baseURL}${path}`)).status).toBe(200);
+  }
 
   for (const [index, email] of emails.entries()) {
     const result = await request('/auth/sign-up/email', {
@@ -1235,6 +1260,179 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
   expect(deletedObject.stdout + deletedObject.stderr).toMatch(
     /not exist|not found|NoSuchKey|404/i,
   );
+
+  // Permalinks resolve old posts and exact replies, always behind the session middleware.
+  const getThreadPost = async (id: string, actor = 0) => {
+    const response = await request(`/messages/${id}/thread`, { actor });
+    expect(response.status).toBe(200);
+    return ((await response.json()) as { messages: Post[] }).messages.find(
+      (item) => item.id === id,
+    ) as Post;
+  };
+  const sourceResponse = await request('/messages', {
+    method: 'POST',
+    actor: 1,
+    body: {
+      channelId: secondChannel?.id,
+      body: `quote source <@${workspace.user.id}>`,
+    },
+  });
+  expect(sourceResponse.status).toBe(201);
+  const sourceId = ((await sourceResponse.json()) as { message: Post }).message
+    .id;
+  expect(
+    (await fetch(`${baseURL}/api/messages/${sourceId}/thread`)).status,
+  ).toBe(401);
+  expect((await request('/messages/missing/thread')).status).toBe(404);
+  const countBeforeQuote = await (
+    await request('/notifications/unread-count')
+  ).json();
+  expect(
+    (
+      await request('/messages', {
+        method: 'POST',
+        actor: 99,
+        body: { channelId: ownChannel?.id, body: '', quoteId: sourceId },
+      })
+    ).status,
+  ).toBe(401);
+  expect(
+    (
+      await request('/messages', {
+        method: 'POST',
+        body: { channelId: ownChannel?.id, body: '', quoteId: 'missing' },
+      })
+    ).status,
+  ).toBe(404);
+  expect(
+    (
+      await request('/messages', {
+        method: 'POST',
+        body: { channelId: ownChannel?.id, body: '' },
+      })
+    ).status,
+  ).toBe(400);
+  expect(
+    (await upload([memo], channel.id, undefined, 0, '', 'missing')).status,
+  ).toBe(404);
+  const quoteResponse = await request('/messages', {
+    method: 'POST',
+    body: { channelId: ownChannel?.id, body: '', quoteId: sourceId },
+  });
+  expect(quoteResponse.status).toBe(201);
+  const quoteId = ((await quoteResponse.json()) as { message: Post }).message
+    .id;
+  const quoted = await getThreadPost(quoteId, 1);
+  expect(quoted.body).toBe('');
+  expect(quoted.quote?.source?.id).toBe(sourceId);
+  expect(quoted.quote?.source?.channelId).toBe(secondChannel?.id);
+  expect(quoted.quote?.source?.mentions.map((member) => member.userId)).toEqual(
+    [workspace.user.id],
+  );
+  expect(quoted.mentions).toHaveLength(0);
+  expect(await (await request('/notifications/unread-count')).json()).toEqual(
+    countBeforeQuote,
+  );
+  const quoteList = (await (
+    await request(`/messages?channelId=${ownChannel?.id}`)
+  ).json()) as Page;
+  expect(quoteList.messages.find((item) => item.id === quoteId)?.quote).toEqual(
+    quoted.quote,
+  );
+  expect(
+    (
+      await request(`/messages/${quoteId}`, {
+        method: 'PATCH',
+        body: { body: '' },
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await request(`/messages/${sourceId}`, {
+        method: 'PATCH',
+        actor: 1,
+        body: { body: 'updated quote source' },
+      })
+    ).status,
+  ).toBe(200);
+  expect((await getThreadPost(quoteId)).quote?.source?.body).toBe(
+    'updated quote source',
+  );
+  const quoteReplyResponse = await request('/messages', {
+    method: 'POST',
+    body: {
+      channelId: ownChannel?.id,
+      parentId: quoteId,
+      body: 'reply with quote',
+      quoteId: sourceId,
+    },
+  });
+  expect(quoteReplyResponse.status).toBe(201);
+  const quoteReplyId = ((await quoteReplyResponse.json()) as { message: Post })
+    .message.id;
+  expect((await getThreadPost(quoteReplyId)).quote?.source?.id).toBe(sourceId);
+  const attachedQuote = await upload(
+    [memo],
+    channel.id,
+    undefined,
+    0,
+    'with attachment',
+    sourceId,
+  );
+  expect(attachedQuote.status).toBe(201);
+  expect(
+    (await getThreadPost(attachedQuote.data.message.id)).quote?.source?.id,
+  ).toBe(sourceId);
+  const quoteOfAttachmentResponse = await request('/messages', {
+    method: 'POST',
+    body: {
+      channelId: channel.id,
+      body: 'quoting attachment',
+      quoteId: attachedQuote.data.message.id,
+    },
+  });
+  expect(quoteOfAttachmentResponse.status).toBe(201);
+  const quoteOfAttachmentId = (
+    (await quoteOfAttachmentResponse.json()) as { message: Post }
+  ).message.id;
+  expect(
+    (await getThreadPost(quoteOfAttachmentId)).quote?.source?.attachmentNames,
+  ).toEqual([memo.name]);
+  expect(
+    (await request(`/messages/${sourceId}`, { method: 'DELETE', actor: 1 }))
+      .status,
+  ).toBe(200);
+  expect((await request(`/messages/${sourceId}/thread`)).status).toBe(404);
+  expect((await getThreadPost(quoteId)).quote).toEqual({
+    messageId: quoteId,
+    source: null,
+  });
+  expect((await getThreadPost(quoteReplyId)).quote?.source).toBeNull();
+  expect(
+    (
+      await request(`/messages/${quoteId}`, {
+        method: 'PATCH',
+        body: { body: '' },
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (await request(`/messages/${quoteId}`, { method: 'DELETE' })).status,
+  ).toBe(200);
+  expect((await request(`/messages/${quoteReplyId}/thread`)).status).toBe(404);
+  expect(
+    (
+      await request(`/messages/${attachedQuote.data.message.id}`, {
+        method: 'DELETE',
+      })
+    ).status,
+  ).toBe(200);
+  expect((await getThreadPost(quoteOfAttachmentId)).quote?.source).toBeNull();
+  expect(
+    (await request(`/messages/${quoteOfAttachmentId}`, { method: 'DELETE' }))
+      .status,
+  ).toBe(200);
 
   const disconnectedA = waitForSocketClose(socketA);
   const disconnectedExtraTab = waitForSocketClose(extraTab);

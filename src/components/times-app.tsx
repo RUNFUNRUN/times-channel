@@ -23,7 +23,20 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import {
+  useParams,
+  usePathname,
+  useRouter,
+  useSearchParams,
+} from 'next/navigation';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { AppearanceDialog } from '@/components/appearance-dialog';
 import { AuthScreen } from '@/components/auth-screen';
 import { Composer } from '@/components/composer';
@@ -31,6 +44,7 @@ import { EditChannelDialog } from '@/components/edit-channel-dialog';
 import { MessageItem } from '@/components/message-item';
 import { NotificationsPanel } from '@/components/notifications-panel';
 import { ProfileDialog } from '@/components/profile-dialog';
+import { ShareLink } from '@/components/share-link';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -78,14 +92,9 @@ import {
   type Workspace,
 } from '@/lib/api-client';
 import { authClient } from '@/lib/auth-client';
+import { channelPath, threadPath, type View, viewPath } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 
-type View =
-  | { kind: 'all' }
-  | { kind: 'channel'; id: string }
-  | { kind: 'saved' }
-  | { kind: 'notifications' }
-  | { kind: 'search'; q: string };
 const dayLabel = (timestamp: number) =>
   new Date(timestamp).toLocaleDateString('ja-JP', {
     month: 'long',
@@ -113,7 +122,7 @@ const Loading = () => (
   </div>
 );
 
-export const TimesApp = () => {
+export const TimesApp = ({ children }: { children: ReactNode }) => {
   const session = authClient.useSession();
   const queryClient = useQueryClient();
   useEffect(() => {
@@ -136,13 +145,40 @@ export const TimesApp = () => {
       </main>
     );
   return session.data ? (
-    <WorkspaceApp key={session.data.user.id} />
+    <>
+      <WorkspaceApp key={session.data.user.id} />
+      {children}
+    </>
   ) : (
     <AuthScreen />
   );
 };
 
 const WorkspaceApp = () => {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useParams<{ channelId?: string; messageId?: string }>();
+  const searchParams = useSearchParams();
+  const view: View = params.channelId
+    ? { kind: 'channel', id: params.channelId }
+    : params.messageId
+      ? { kind: 'message', id: params.messageId }
+      : pathname === '/notifications'
+        ? { kind: 'notifications' }
+        : pathname === '/saved'
+          ? { kind: 'saved' }
+          : pathname === '/search'
+            ? {
+                kind: 'search',
+                q: (searchParams.get('q') ?? '').trim().slice(0, 200),
+              }
+            : { kind: 'all' };
+  const threadId = view.kind === 'message' ? null : searchParams.get('thread');
+  const closeThread = useCallback(() => {
+    router.push(threadPath(pathname, searchParams.toString()), {
+      scroll: false,
+    });
+  }, [router, pathname, searchParams]);
   const connected = useRealtime();
   const queryClient = useQueryClient();
   const workspace = useQuery({
@@ -160,36 +196,40 @@ const WorkspaceApp = () => {
     refetchInterval: connected ? 60000 : 10000,
   });
   const unreadCount = notifications.data?.unreadCount ?? 0;
-  const [threadFocusId, setThreadFocusId] = useState<string>();
-  const [view, setView] = useState<View>({ kind: 'all' });
   const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const [threadId, setThreadId] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
   const [starPending, setStarPending] = useState(false);
   const [signoutPending, setSignoutPending] = useState(false);
   const searchInput = useRef<HTMLInputElement>(null);
-  const changeView = useCallback((next: View) => {
-    setView(next);
-    setThreadId(null);
-    setThreadFocusId(undefined);
+  const changeView = useCallback(
+    (next: View) => {
+      router.push(viewPath(next), { scroll: false });
+      setSidebarOpen(false);
+      setEditOpen(false);
+    },
+    [router],
+  );
+  useEffect(() => {
+    setSearch(pathname === '/search' ? (searchParams.get('q') ?? '') : '');
     setSidebarOpen(false);
     setEditOpen(false);
-  }, []);
+  }, [pathname, searchParams]);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
         event.preventDefault();
         searchInput.current?.focus();
       }
-      if (event.key === 'Escape') setThreadId(null);
+      if (event.key === 'Escape' && threadId && !event.defaultPrevented)
+        closeThread();
     };
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  }, []);
+  }, [threadId, closeThread]);
 
   const data = workspace.data;
   if (!data)
@@ -214,23 +254,29 @@ const WorkspaceApp = () => {
   );
   const openChannel = (id: string) => changeView({ kind: 'channel', id });
   const openThread = (id: string) => {
-    setThreadFocusId(undefined);
-    setThreadId(id);
+    router.push(threadPath(pathname, searchParams.toString(), id), {
+      scroll: false,
+    });
   };
   const openNotification = (item: NotificationItem) => {
-    changeView({ kind: 'channel', id: item.channelId });
-    setThreadId(item.threadId);
-    setThreadFocusId(item.messageId);
+    router.push(threadPath(channelPath(item.channelId), '', item.messageId), {
+      scroll: false,
+    });
+    setSidebarOpen(false);
   };
   const title =
     currentChannel?.name ??
-    (view.kind === 'notifications'
-      ? '通知'
-      : view.kind === 'saved'
-        ? '後で読む'
-        : view.kind === 'search'
-          ? `「${view.q}」の検索結果`
-          : 'みんなのタイムライン');
+    (view.kind === 'message'
+      ? '投稿'
+      : view.kind === 'notifications'
+        ? '通知'
+        : view.kind === 'saved'
+          ? '後で読む'
+          : view.kind === 'search'
+            ? `「${view.q}」の検索結果`
+            : view.kind === 'channel'
+              ? 'チャンネルが見つかりません'
+              : 'みんなのタイムライン');
   const favoriteChannel = async () => {
     if (!currentChannel || starPending) return;
     setStarPending(true);
@@ -253,12 +299,12 @@ const WorkspaceApp = () => {
   };
 
   const channelButton = (item: Channel) => (
-    <button
-      type='button'
+    <Link
+      href={channelPath(item.id)}
       key={item.id}
       title={item.name}
       className={cn('channel-link', currentChannel?.id === item.id && 'active')}
-      onClick={() => openChannel(item.id)}
+      onClick={() => setSidebarOpen(false)}
     >
       <Hash className='size-4 shrink-0 opacity-60' />
       <span className='truncate'>{item.name}</span>
@@ -267,7 +313,7 @@ const WorkspaceApp = () => {
           自分
         </span>
       )}
-    </button>
+    </Link>
   );
   const _sidebar = (
     <div className='sidebar-inner'>
@@ -282,21 +328,21 @@ const WorkspaceApp = () => {
       </div>
       <div className='sidebar-scroll'>
         <nav aria-label='ワークスペース' className='space-y-1 px-3 pt-4'>
-          <button
-            type='button'
+          <Link
+            href='/'
             className={cn('sidebar-nav', view.kind === 'all' && 'active')}
-            onClick={() => changeView({ kind: 'all' })}
+            onClick={() => setSidebarOpen(false)}
           >
             <Home className='size-4' />
             みんなのタイムライン
-          </button>
-          <button
-            type='button'
+          </Link>
+          <Link
+            href='/notifications'
             className={cn(
               'sidebar-nav',
               view.kind === 'notifications' && 'active',
             )}
-            onClick={() => changeView({ kind: 'notifications' })}
+            onClick={() => setSidebarOpen(false)}
           >
             <Bell className='size-4' />
             通知
@@ -305,15 +351,15 @@ const WorkspaceApp = () => {
                 {unreadCount > 99 ? '99+' : unreadCount}
               </span>
             )}
-          </button>
-          <button
-            type='button'
+          </Link>
+          <Link
+            href='/saved'
             className={cn('sidebar-nav', view.kind === 'saved' && 'active')}
-            onClick={() => changeView({ kind: 'saved' })}
+            onClick={() => setSidebarOpen(false)}
           >
             <Bookmark className='size-4' />
             後で読む
-          </button>
+          </Link>
         </nav>
         {data.channels.some((item) => item.starred) && (
           <section className='sidebar-section'>
@@ -467,27 +513,27 @@ const WorkspaceApp = () => {
         </header>
         <div className='app-body'>
           <nav className='app-rail' aria-label='アプリ'>
-            <button
-              type='button'
+            <Link
+              href='/'
               className={cn(
                 'rail-item',
                 view.kind !== 'saved' &&
                   view.kind !== 'notifications' &&
                   'active',
               )}
-              onClick={() => changeView({ kind: 'all' })}
+              onClick={() => setSidebarOpen(false)}
             >
               <Home />
               <span>ホーム</span>
-            </button>
-            <button
-              type='button'
+            </Link>
+            <Link
+              href='/notifications'
               className={cn(
                 'rail-item relative',
                 view.kind === 'notifications' && 'active',
               )}
               aria-label={unreadCount ? `通知 ${unreadCount}件の未読` : '通知'}
-              onClick={() => changeView({ kind: 'notifications' })}
+              onClick={() => setSidebarOpen(false)}
             >
               <Bell />
               <span>通知</span>
@@ -496,15 +542,15 @@ const WorkspaceApp = () => {
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
               )}
-            </button>
-            <button
-              type='button'
+            </Link>
+            <Link
+              href='/saved'
               className={cn('rail-item', view.kind === 'saved' && 'active')}
-              onClick={() => changeView({ kind: 'saved' })}
+              onClick={() => setSidebarOpen(false)}
             >
               <Bookmark />
               <span>後で読む</span>
-            </button>
+            </Link>
             <div className='mt-auto pb-4'>
               <UserAvatar
                 name={data.user.name}
@@ -576,6 +622,12 @@ const WorkspaceApp = () => {
                 >
                   <Pencil className='size-4 text-muted-foreground' />
                 </Button>
+              )}
+              {currentChannel && (
+                <ShareLink
+                  path={channelPath(currentChannel.id)}
+                  label='チャンネルを共有'
+                />
               )}
               {currentChannel && (
                 <Button
@@ -656,7 +708,24 @@ const WorkspaceApp = () => {
                 </Button>
               </div>
             )}
-            {view.kind === 'notifications' ? (
+            {view.kind === 'message' ? (
+              <ThreadPanel
+                key={view.id}
+                id={view.id}
+                focusId={view.id}
+                userId={data.user.id}
+                onClose={() => changeView({ kind: 'all' })}
+                onChannel={openChannel}
+                fullPage
+              />
+            ) : view.kind === 'channel' && !currentChannel ? (
+              <ErrorState
+                error={new Error('チャンネルが削除されたか、見つかりません。')}
+                retry={() => {
+                  void workspace.refetch();
+                }}
+              />
+            ) : view.kind === 'notifications' ? (
               <NotificationsPanel
                 unreadCount={unreadCount}
                 onOpen={openNotification}
@@ -697,9 +766,9 @@ const WorkspaceApp = () => {
             <ThreadPanel
               key={threadId}
               id={threadId}
-              focusId={threadFocusId}
+              focusId={threadId}
               userId={data.user.id}
-              onClose={() => setThreadId(null)}
+              onClose={closeThread}
               onChannel={openChannel}
             />
           )}
@@ -938,10 +1007,12 @@ const ThreadPanel = ({
   focusId,
   onClose,
   onChannel,
+  fullPage = false,
 }: {
   id: string;
   userId: string;
   focusId?: string;
+  fullPage?: boolean;
   onClose: () => void;
   onChannel: (id: string) => void;
 }) => {
@@ -982,7 +1053,10 @@ const ThreadPanel = ({
       end.current?.scrollIntoView({ block: 'nearest' });
   }, [replies.length, parentId, focusId, lastReplyAuthor, userId]);
   return (
-    <aside className='thread-panel' aria-label='スレッド'>
+    <aside
+      className={cn('thread-panel', fullPage && 'thread-page')}
+      aria-label='スレッド'
+    >
       <header className='thread-header'>
         <h2 className='text-lg font-bold'>スレッド</h2>
         <Button

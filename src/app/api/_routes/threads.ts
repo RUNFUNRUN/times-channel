@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { getAttachments } from '@/app/api/_lib/attachments';
 import { getMessageMentions } from '@/app/api/_lib/message-events';
+import { getMessageQuotes } from '@/app/api/_lib/quotes';
 import type { ApiEnv } from '@/app/api/_lib/types';
 import { bookmark, channel, message, reaction, user } from '@/lib/schema';
 
@@ -48,6 +49,10 @@ export const threadsRoutes = new Hono<ApiEnv>().get(
       .innerJoin(channel, eq(message.channelId, channel.id))
       .where(or(eq(message.id, parentId), eq(message.parentId, parentId)))
       .orderBy(asc(message.createdAt), asc(message.id));
+    const quotes = await getMessageQuotes(
+      db,
+      rows.map((row) => row.id),
+    );
     const reactions = await db
       .select()
       .from(reaction)
@@ -70,6 +75,7 @@ export const threadsRoutes = new Hono<ApiEnv>().get(
       messages: rows.map((row) => ({
         ...row,
         saved: Boolean(row.saved),
+        quote: quotes.find((item) => item.messageId === row.id) ?? null,
         mentions: mentions.filter((item) => item.messageId === row.id),
         attachments: attachments.filter((item) => item.messageId === row.id),
         replyCount: row.id === parentId ? rows.length - 1 : 0,

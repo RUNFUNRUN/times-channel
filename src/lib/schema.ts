@@ -113,6 +113,20 @@ export const message = sqliteTable(
   ],
 );
 
+// Keep the quote card after the source is deleted without copying its content.
+export const messageQuote = sqliteTable(
+  'message_quote',
+  {
+    messageId: text('message_id')
+      .primaryKey()
+      .references(() => message.id, { onDelete: 'cascade' }),
+    sourceId: text('source_id').references(() => message.id, {
+      onDelete: 'set null',
+    }),
+  },
+  (table) => [index('message_quote_source_idx').on(table.sourceId)],
+);
+
 export const reaction = sqliteTable(
   'reaction',
   {
@@ -233,5 +247,6 @@ export const schema = {
   attachment,
   fileCleanup,
   messageMention,
+  messageQuote,
   notification,
 };
