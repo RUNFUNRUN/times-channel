@@ -801,18 +801,32 @@ a:focus-visible {
     font-size: 24px;
   }
 }
-@media (hover: none) {
+@media (max-width: 720px), (hover: none) {
+  .message-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    row-gap: 4px;
+  }
+
   .message-actions {
     position: static;
-    margin-left: auto;
-    align-self: flex-start;
-    flex-direction: column;
+    grid-column: 1 / -1;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 2px;
     border: 0;
     box-shadow: none;
     opacity: 1;
     pointer-events: auto;
     background: transparent;
     padding: 0;
+  }
+
+  .message-actions > button {
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
