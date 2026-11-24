@@ -110,17 +110,24 @@ bun run test:integration
 
 ## Cloudflare へのデプロイ
 
-1. `bunx wrangler d1 create times-channel` で本番 D1 を作成。
-2. `wrangler.jsonc` の `database_id`（現在はローカル用のプレースホルダー）を発行された ID に変更。
-3. `wrangler.jsonc` の `vars.BETTER_AUTH_URL` は `https://times.runfunrun.xyz` に設定済み。ドメインを変更する場合はこの値も更新。
-4. `bunx wrangler secret put BETTER_AUTH_SECRET` で本番のランダムなシークレットを設定。
-5. `bun run db:migrate:remote` で本番 D1 にマイグレーションを適用。
-6. `bunx wrangler r2 bucket create times-channel-uploads` で本番の R2 バケットを作成。名前を変更する場合は `wrangler.jsonc` の `UPLOADS.bucket_name` も合わせて変更。
-7. `bun run deploy` でデプロイ。
+本番 Worker は `times-channel`、公開先は [https://times.runfunrun.xyz](https://times.runfunrun.xyz) です。専用の D1 `times-channel` と非公開 R2 `times-channel-uploads` を作成し、`wrangler.jsonc` に本番の binding とカスタムドメインを設定しています。`BETTER_AUTH_SECRET` は本番専用の値を Cloudflare Secret に保存し、リポジトリには含めません。
 
-認証の URL 設定とは別に、Cloudflare の Workers 管理画面で `times.runfunrun.xyz` をこの Worker のカスタムドメインとして割り当ててください。ブラウザーの API クライアントは同じ origin を使うため、`NEXT_PUBLIC_*` への URL 設定は不要です。
+再デプロイは次の順序で実行します。
 
-本番は Cloudflare Access で利用者を制限する想定です。カスタムドメインと workers.dev の両方が公開される場合は、両方の入口に同じアクセス制限を適用してください。Access を通過した利用者は任意のメールアドレスで登録できます。メールの所有確認や、パスワード再発行メールの機能はありません。
+```sh
+bun run check:fix
+bun run typecheck
+bun run db:migrate:remote
+bun run deploy
+```
+
+`db:migrate:remote` は本番 D1 にスキーマを適用します。ローカルの投稿やアカウントは本番にコピーしません。`wrangler.jsonc` の `database_id` は本番 DB を指しており、ローカルの操作は引き続き `--local` を使用します。`preview_database_id` には既存の開発用 ID を指定し、ローカルの投稿・アカウントを引き継ぎます。
+
+認証 URL は `BETTER_AUTH_URL=https://times.runfunrun.xyz` に設定済みです。ローカル開発では `.dev.vars` の `BETTER_AUTH_URL=` で上書きします。ブラウザーの API クライアントは同じ origin を使うため、`NEXT_PUBLIC_*` の URL 設定は不要です。
+
+公開する入口は独自ドメインだけにし、`workers_dev: false` と `preview_urls: false` で代替 URL を無効にしています。Cloudflare Access は現時点では設定せず、管理者が後から独自ドメインに追加する方針です。アプリ自身のメールアドレス・パスワード認証は有効です。メールの所有確認やパスワード再発行メールはありません。
+
+別アカウントへ移す場合は、D1／R2 を新規作成して binding を更新し、`bunx wrangler secret put BETTER_AUTH_SECRET` で新しい本番 Secret を設定してください。Durable Object は初回デプロイ時に Wrangler が作成します。
 
 ## 添付ファイル
 

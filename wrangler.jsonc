@@ -2,6 +2,9 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "main": "worker.ts",
   "name": "times-channel",
+  "workers_dev": false,
+  "routes": [{ "pattern": "times.runfunrun.xyz", "custom_domain": true }],
+  "preview_urls": false,
   "compatibility_date": "2026-11-23",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "vars": {
@@ -15,8 +18,9 @@
     {
       "binding": "DB",
       "database_name": "times-channel",
-      // Replace with the ID returned by `bunx wrangler d1 create times-channel` before deploying.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "b219abbe-2d08-4375-9405-9c59d29fb885",
+      // Preserve the existing local development database when targeting production.
+      "preview_database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "drizzle"
     }
   ],
