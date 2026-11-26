@@ -551,13 +551,6 @@ const WorkspaceApp = () => {
               <Bookmark />
               <span>後で読む</span>
             </Link>
-            <div className='mt-auto pb-4'>
-              <UserAvatar
-                name={data.user.name}
-                image={data.user.image}
-                className='size-9'
-              />
-            </div>
           </nav>
           <aside className='desktop-sidebar' aria-label='チャンネル一覧'>
             {_sidebar}
