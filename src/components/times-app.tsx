@@ -36,6 +36,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
 } from 'react';
@@ -198,6 +199,8 @@ const WorkspaceApp = () => {
   const unreadCount = notifications.data?.unreadCount ?? 0;
   const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [channelsExpanded, setChannelsExpanded] = useState(true);
+  const [timesExpanded, setTimesExpanded] = useState(true);
   const [channelSettingsOpen, setChannelSettingsOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -384,10 +387,11 @@ const WorkspaceApp = () => {
             {starredChannels.map(channelButton)}
           </section>
         )}
-        <section className='sidebar-section'>
-          <div className='sidebar-label'>
-            <ChevronDown className='size-3.5' />
-            チャンネル
+        <SidebarChannelSection
+          title='チャンネル'
+          expanded={channelsExpanded}
+          onToggle={() => setChannelsExpanded((expanded) => !expanded)}
+          action={
             <Button
               size='icon-xs'
               variant='ghost'
@@ -397,21 +401,31 @@ const WorkspaceApp = () => {
             >
               <Plus />
             </Button>
-          </div>
-          {visibleChannels.filter((item) => !item.ownerId).map(channelButton)}
-          <button
-            type='button'
-            className='channel-link text-white/45!'
-            onClick={openChannelSettings}
-          >
-            <Plus className='size-4' />
-            チャンネルを追加
-          </button>
-        </section>
-        <section className='sidebar-section'>
-          <div className='sidebar-label'>
-            <ChevronDown className='size-3.5' />
-            みんなの times
+          }
+        >
+          {visibleChannels
+            .filter(
+              (item) =>
+                !item.ownerId &&
+                (channelsExpanded || item.id === currentChannel?.id),
+            )
+            .map(channelButton)}
+          {channelsExpanded && (
+            <button
+              type='button'
+              className='channel-link text-white/45!'
+              onClick={openChannelSettings}
+            >
+              <Plus className='size-4' />
+              チャンネルを追加
+            </button>
+          )}
+        </SidebarChannelSection>
+        <SidebarChannelSection
+          title='みんなの times'
+          expanded={timesExpanded}
+          onToggle={() => setTimesExpanded((expanded) => !expanded)}
+          action={
             <Button
               size='icon-xs'
               variant='ghost'
@@ -421,9 +435,12 @@ const WorkspaceApp = () => {
             >
               <Settings2 />
             </Button>
-          </div>
-          {personalChannels.map(channelButton)}
-        </section>
+          }
+        >
+          {personalChannels
+            .filter((item) => timesExpanded || item.id === currentChannel?.id)
+            .map(channelButton)}
+        </SidebarChannelSection>
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -803,6 +820,43 @@ const WorkspaceApp = () => {
         )}
       </div>
     </RealtimeContext>
+  );
+};
+
+const SidebarChannelSection = ({
+  title,
+  expanded,
+  onToggle,
+  action,
+  children,
+}: {
+  title: string;
+  expanded: boolean;
+  onToggle: () => void;
+  action: ReactNode;
+  children: ReactNode;
+}) => {
+  const contentId = useId();
+  return (
+    <section className='sidebar-section'>
+      <div className='sidebar-label'>
+        <button
+          type='button'
+          className='flex h-full min-w-0 flex-1 items-center gap-[7px] rounded-sm text-left hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60'
+          aria-expanded={expanded}
+          aria-controls={contentId}
+          onClick={onToggle}
+        >
+          <ChevronDown
+            aria-hidden='true'
+            className={cn('size-3.5 shrink-0', !expanded && '-rotate-90')}
+          />
+          {title}
+        </button>
+        {action}
+      </div>
+      <div id={contentId}>{children}</div>
+    </section>
   );
 };
 
