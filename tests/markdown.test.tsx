@@ -90,6 +90,14 @@ test('untrusted HTML and URL schemes never become executable markup', () => {
     'rel="noopener noreferrer"',
   );
 });
+test('Markdown channel links stay in the current tab', () => {
+  const local = render('[個人の times を開く](/channels/times-123)');
+  expect(local).toContain('href="/channels/times-123"');
+  expect(local).not.toContain('target="_blank"');
+  expect(render('[外部リンク](https://example.test)')).toContain(
+    'target="_blank"',
+  );
+});
 test('external Markdown images stay links and authenticated R2 images can render', () => {
   const remote = render('![画像](https://example.test/pixel.png)');
   expect(remote).toContain('href="https://example.test/pixel.png"');

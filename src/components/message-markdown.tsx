@@ -3,6 +3,7 @@
 import { decodeHTMLStrict as decodeHTML } from 'entities';
 import type { MarkedToken, Token } from 'marked';
 import Image from 'next/image';
+import Link from 'next/link';
 import { Fragment, type ReactNode, useMemo } from 'react';
 import { markdownLink, parseMarkdown } from '@/lib/markdown';
 import { displayMentions, type MentionMember } from '@/lib/mentions';
@@ -125,6 +126,13 @@ const renderToken = (
       const label = token.autolink
         ? token.text
         : renderTokens(token.tokens, members);
+      if (href?.startsWith('/channels/')) {
+        return (
+          <Link href={href} title={token.title ?? undefined} prefetch={false}>
+            {label}
+          </Link>
+        );
+      }
       return href ? (
         <a
           href={href}
