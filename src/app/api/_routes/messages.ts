@@ -78,6 +78,7 @@ export const messagesRoutes = new Hono<ApiEnv>()
           body: message.body,
           channelId: message.channelId,
           parentId: message.parentId,
+          alsoPostToChannel: message.alsoPostToChannel,
           userId: message.userId,
           createdAt: message.createdAt,
           updatedAt: message.updatedAt,
@@ -102,8 +103,13 @@ export const messagesRoutes = new Hono<ApiEnv>()
         .innerJoin(channel, eq(message.channelId, channel.id))
         .where(
           and(
-            // Search and saved views also include replies; normal timelines contain root posts only.
-            !q && !saved ? isNull(message.parentId) : undefined,
+            // Search and saved views can also include replies posted only in threads.
+            !q && !saved
+              ? or(
+                  isNull(message.parentId),
+                  eq(message.alsoPostToChannel, true),
+                )
+              : undefined,
             channelId ? eq(message.channelId, channelId) : undefined,
             escaped
               ? or(
@@ -203,6 +209,7 @@ export const messagesRoutes = new Hono<ApiEnv>()
         .extend({
           channelId: z.string().min(1),
           parentId: z.string().optional(),
+          alsoPostToChannel: z.boolean().optional(),
           quoteId: z.string().min(1).max(128).optional(),
         })
         .refine((input) => Boolean(input.body || input.quoteId), {

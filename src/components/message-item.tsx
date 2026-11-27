@@ -77,6 +77,8 @@ export const MessageItem = ({
   const action = useMessageAction();
   const run = (request: () => Promise<ApiResponse>) => action.mutate(request);
   const time = new Date(item.createdAt);
+  const showThreadLink = Boolean(item.parentId) && !inThread;
+  const showChannelPostLabel = inThread && item.alsoPostToChannel;
   const toggleReaction = (emoji: (typeof REACTIONS)[number]) => {
     run(() =>
       client.api.messages[':id'].reaction.$put({
@@ -103,15 +105,28 @@ export const MessageItem = ({
     >
       <UserAvatar name={item.author} image={item.authorImage} />
       <div className='min-w-0 flex-1'>
-        {showChannel && (
-          <button
-            type='button'
-            className='mb-1 text-xs text-muted-foreground hover:text-primary hover:underline'
-            onClick={() => onChannel(item.channelId)}
-          >
-            # {item.channelName}
-            {item.parentId && ' · スレッドの返信'}
-          </button>
+        {(showChannel || showThreadLink || showChannelPostLabel) && (
+          <div className='mb-1 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground'>
+            {showChannel && (
+              <button
+                type='button'
+                className='hover:text-primary hover:underline'
+                onClick={() => onChannel(item.channelId)}
+              >
+                # {item.channelName}
+              </button>
+            )}
+            {showThreadLink && (
+              <button
+                type='button'
+                className='text-link hover:underline'
+                onClick={() => onThread(item.id)}
+              >
+                スレッドの返信
+              </button>
+            )}
+            {showChannelPostLabel && <span>チャンネルにも投稿済み</span>}
+          </div>
         )}
         <div className='flex flex-wrap items-baseline gap-x-2'>
           <span className='text-[15px] font-bold'>{item.author}</span>

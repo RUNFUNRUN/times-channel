@@ -15,8 +15,12 @@ export const cleanupUploads = async (db: DB, bucket: R2Bucket) => {
 
 export const validateMessageTarget = async (
   db: DB,
-  input: { channelId: string; parentId?: string },
+  input: { channelId: string; parentId?: string; alsoPostToChannel?: boolean },
 ) => {
+  if (input.alsoPostToChannel && !input.parentId)
+    throw new HTTPException(400, {
+      message: 'チャンネルへの同時投稿はスレッドの返信でのみ指定できます。',
+    });
   const [target] = await db
     .select({ id: channel.id })
     .from(channel)

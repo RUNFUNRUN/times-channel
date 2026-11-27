@@ -38,6 +38,10 @@ export const uploadsRoutes = new Hono<ApiEnv>()
       z.object({
         channelId: z.string().min(1),
         parentId: z.string().optional(),
+        alsoPostToChannel: z
+          .enum(['true', 'false'])
+          .transform((value) => value === 'true')
+          .optional(),
         quoteId: z.string().min(1).max(128).optional(),
         body: z.string().trim().max(MESSAGE_LIMIT).default(''),
         files: z

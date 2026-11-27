@@ -98,6 +98,9 @@ export const message = sqliteTable(
     parentId: text('parent_id').references((): AnySQLiteColumn => message.id, {
       onDelete: 'cascade',
     }),
+    alsoPostToChannel: integer('also_post_to_channel', { mode: 'boolean' })
+      .notNull()
+      .default(false),
     body: text('body').notNull(),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at'),

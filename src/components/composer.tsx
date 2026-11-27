@@ -41,6 +41,7 @@ export const Composer = ({
 }) => {
   const storageKey = `times:draft:${userId}:${channelId}:${parentId ?? 'root'}${quote?.source ? `:quote:${quote.source.id}` : ''}`;
   const [draft, setDraft] = useState<string | null>(null);
+  const [alsoPostToChannel, setAlsoPostToChannel] = useState(false);
   const [preview, setPreview] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [files, setFiles] = useState<{ id: string; file: File }[]>([]);
@@ -76,6 +77,7 @@ export const Composer = ({
                 body: draft?.trim() ?? '',
                 channelId,
                 parentId,
+                alsoPostToChannel: alsoPostToChannel ? 'true' : undefined,
                 quoteId: quote?.source?.id,
                 files: files.map((item) => item.file),
               },
@@ -85,11 +87,13 @@ export const Composer = ({
                 body: draft?.trim() ?? '',
                 channelId,
                 parentId,
+                alsoPostToChannel: alsoPostToChannel || undefined,
                 quoteId: quote?.source?.id,
               },
             }),
       );
       setDraft('');
+      setAlsoPostToChannel(false);
       setFiles([]);
       setPreview(false);
       try {
@@ -211,6 +215,20 @@ export const Composer = ({
             if (!invalid) setFiles(selected);
           }}
         />
+        {parentId && (
+          <label className='flex w-fit max-w-full cursor-pointer items-center gap-2 px-4 py-2 text-xs text-muted-foreground'>
+            <input
+              type='checkbox'
+              checked={alsoPostToChannel}
+              disabled={draft === null || action.isPending}
+              onChange={(event) => setAlsoPostToChannel(event.target.checked)}
+              className='size-4 shrink-0 accent-primary'
+            />
+            <span className='wrap-anywhere'>
+              以下にも投稿する: #{channelName}
+            </span>
+          </label>
+        )}
         <div className='flex items-center justify-between px-3 pb-2'>
           <div className='flex items-center gap-1'>
             <Button

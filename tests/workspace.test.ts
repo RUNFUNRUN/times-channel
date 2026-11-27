@@ -33,12 +33,14 @@ const upload = async (
   actor = 0,
   body = '',
   quoteId?: string,
+  alsoPostToChannel = false,
 ) => {
   const form = new FormData();
   form.set('channelId', channelId);
   form.set('body', body);
   if (parentId) form.set('parentId', parentId);
   if (quoteId) form.set('quoteId', quoteId);
+  if (alsoPostToChannel) form.set('alsoPostToChannel', 'true');
   for (const file of files) form.append('files', file);
   const result = await fetch(`${baseURL}/api/uploads`, {
     method: 'POST',
@@ -72,6 +74,7 @@ type Post = {
   body: string;
   userId: string;
   parentId: string | null;
+  alsoPostToChannel: boolean;
   replyCount: number;
   channelName: string;
   reactions: { emoji: string; userId: string }[];
@@ -1069,6 +1072,54 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
     true,
   );
 
+  const channelReplyInput = {
+    channelId: channel.id,
+    parentId: root.id,
+    body: 'チャンネルにも表示する返信',
+    alsoPostToChannel: true,
+  };
+  expect(
+    (
+      await request('/messages', {
+        method: 'POST',
+        body: { ...channelReplyInput, parentId: undefined },
+      })
+    ).status,
+  ).toBe(400);
+  expect(
+    (
+      await request('/messages', {
+        method: 'POST',
+        body: { ...channelReplyInput, channelId: 'general' },
+      })
+    ).status,
+  ).toBe(400);
+  const channelReplyResult = await withRealtimeEvent(socketA, 'messages', () =>
+    request('/messages', { method: 'POST', actor: 1, body: channelReplyInput }),
+  );
+  expect(channelReplyResult.response.status).toBe(201);
+  const { message: channelReply } =
+    (await channelReplyResult.response.json()) as { message: Post };
+  const channelTimeline = (await (
+    await request(`/messages?channelId=${channel.id}`)
+  ).json()) as Page;
+  expect(channelTimeline.messages).toHaveLength(2);
+  const visibleReply = channelTimeline.messages.find(
+    (item) => item.id === channelReply.id,
+  );
+  expect(visibleReply?.parentId).toBe(root.id);
+  expect(visibleReply?.alsoPostToChannel).toBe(true);
+  expect(
+    channelTimeline.messages.find((item) => item.id === root.id)?.replyCount,
+  ).toBe(2);
+  const channelReplyThread = (await (
+    await request(`/messages/${channelReply.id}/thread`)
+  ).json()) as { parentId: string; messages: Post[] };
+  expect(channelReplyThread.parentId).toBe(root.id);
+  expect(
+    channelReplyThread.messages.find((item) => item.id === channelReply.id),
+  ).toEqual(visibleReply);
+
   // More than a page also exercises ordering for simultaneous timestamps.
   const results = await Promise.all(
     Array.from({ length: 51 }, (_, index) =>
@@ -1089,16 +1140,29 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
       `/messages?channelId=${channel.id}&before=${page1.nextCursor}`,
     )
   ).json()) as Page;
-  expect(page2.messages).toHaveLength(2);
+  expect(page2.messages).toHaveLength(3);
   expect(page2.nextCursor).toBeNull();
   expect(
     new Set([...page1.messages, ...page2.messages].map((item) => item.id)).size,
-  ).toBe(52);
+  ).toBe(53);
 
   expect(
     (await request(`/messages/${root.id}`, { method: 'DELETE' })).status,
   ).toBe(200);
   expect((await request(`/messages/${reply.id}/thread`)).status).toBe(404);
+  expect((await request(`/messages/${channelReply.id}/thread`)).status).toBe(
+    404,
+  );
+  const remainingTimeline = (await (
+    await request(
+      `/messages?channelId=${channel.id}&before=${page1.nextCursor}`,
+    )
+  ).json()) as Page;
+  expect(remainingTimeline.messages.map((item) => item.id)).toEqual(
+    page2.messages
+      .filter((item) => item.id !== root.id && item.id !== channelReply.id)
+      .map((item) => item.id),
+  );
   expect(
     (
       (await (await request('/messages?saved=true')).json()) as Page
@@ -1216,7 +1280,15 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
     (await request(`/messages/${uploadedId}`, { method: 'DELETE', actor: 1 }))
       .status,
   ).toBe(404);
-  const attachedReply = await upload([memo], channel.id, uploadedId, 1);
+  const attachedReply = await upload(
+    [memo],
+    channel.id,
+    uploadedId,
+    1,
+    '',
+    undefined,
+    true,
+  );
   expect(attachedReply.status).toBe(201);
   const attachedThread = (await (
     await request(`/messages/${uploadedId}/thread`)
@@ -1229,6 +1301,18 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
       (item) => item.id === attachedReply.data.message.id,
     )?.attachments,
   ).toHaveLength(1);
+  const attachedReplyPage = (await (
+    await request(`/messages?channelId=${channel.id}`)
+  ).json()) as Page;
+  expect(
+    attachedReplyPage.messages.find(
+      (item) => item.id === attachedReply.data.message.id,
+    ),
+  ).toMatchObject({
+    parentId: uploadedId,
+    alsoPostToChannel: true,
+    attachments: [expect.objectContaining({ name: memo.name })],
+  });
   const r2Key = `times-channel-uploads/attachments/${uploadedId}/${image?.id}`;
   // Check the object itself before and after deletion, independently of D1 metadata.
   const destination = `/tmp/times-r2-test-${runId}.png`;

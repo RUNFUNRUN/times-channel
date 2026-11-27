@@ -1,0 +1,1 @@
+ALTER TABLE `message` ADD `also_post_to_channel` integer DEFAULT false NOT NULL;
