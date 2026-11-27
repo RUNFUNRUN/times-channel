@@ -114,9 +114,6 @@
   --border: #ffffff14;
   --input: #ffffff26;
   --ring: var(--primary);
-  --shell-surface: color-mix(in srgb, var(--brand-color) 24%, #121015);
-  --sidebar-surface: color-mix(in srgb, var(--brand-color) 18%, #19161d);
-  --sidebar-selected: color-mix(in srgb, var(--brand-color) 75%, #25202c);
   --link: #91bcee;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
@@ -165,7 +162,7 @@
 }
 :root.dark {
   --shell-surface: color-mix(in srgb, var(--brand-color) 24%, #121015);
-  --sidebar-surface: color-mix(in srgb, var(--brand-color) 18%, #19161d);
+  --sidebar-surface: color-mix(in srgb, var(--brand-color) 25%, #292531);
   --sidebar-selected: color-mix(in srgb, var(--brand-color) 75%, #25202c);
 }
 
