@@ -136,6 +136,33 @@ export const channelsRoutes = new Hono<ApiEnv>()
       return c.json({ ok: true });
     },
   )
+  .put('/:id/join', async (c) => {
+    const db = c.var.db;
+    const channelId = c.req.param('id');
+    const [target] = await db
+      .select({ id: channel.id })
+      .from(channel)
+      .where(eq(channel.id, channelId));
+    if (!target)
+      throw new HTTPException(404, { message: 'チャンネルが見つかりません。' });
+    const entry = { channelId, visible: true };
+    // Update an existing entry in place or append it without touching other preferences.
+    const slot = sql`coalesce((
+      select '$[' || key || ']'
+      from json_each(${sidebarPreference.channels})
+      where json_extract(value, '$.channelId') = ${channelId}
+    ), '$[#]')`;
+    await db
+      .insert(sidebarPreference)
+      .values({ userId: c.var.user.id, channels: [entry] })
+      .onConflictDoUpdate({
+        target: sidebarPreference.userId,
+        set: {
+          channels: sql`json_set(${sidebarPreference.channels}, ${slot}, json(${JSON.stringify(entry)}))`,
+        },
+      });
+    return c.json({ ok: true });
+  })
   .put(
     '/:id/read',
     zValidator('json', z.object({ messageId: z.string().min(1).max(128) })),

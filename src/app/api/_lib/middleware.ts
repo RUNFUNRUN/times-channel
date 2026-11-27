@@ -30,7 +30,8 @@ export const requireSession = createMiddleware<ApiEnv>(async (c, next) => {
       path.endsWith('/bookmark') ||
       path.endsWith('/favorite') ||
       path === '/api/channels/sidebar' ||
-      (path.startsWith('/api/channels/') && path.endsWith('/read'))
+      (path.startsWith('/api/channels/') &&
+        (path.endsWith('/read') || path.endsWith('/join')))
     )
       publishChange('private', session.user.id);
     else if (

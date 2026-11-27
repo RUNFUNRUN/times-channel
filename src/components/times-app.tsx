@@ -735,6 +735,12 @@ const WorkspaceApp = () => {
                 }}
               />
             )}
+            {currentChannel && !currentChannel.sidebarVisible && (
+              <ChannelJoinBar
+                key={`join-${currentChannel.id}`}
+                channelId={currentChannel.id}
+              />
+            )}
             {currentChannel ? (
               <Composer
                 key={currentChannel.id}
@@ -800,6 +806,38 @@ const WorkspaceApp = () => {
 };
 
 const PencilIcon = () => <Plus className='size-4' />;
+
+const ChannelJoinBar = ({ channelId }: { channelId: string }) => {
+  const queryClient = useQueryClient();
+  const join = useMutation({
+    mutationFn: async () =>
+      readResponse(
+        await client.api.channels[':id'].join.$put({
+          param: { id: channelId },
+        }),
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspace'] }),
+  });
+  return (
+    <div className='flex shrink-0 flex-wrap items-center justify-between gap-2 border-t bg-muted/40 px-4 py-3'>
+      <div className='min-w-0 text-sm'>
+        <p className='font-medium'>このチャンネルに参加していません。</p>
+        <p className='text-xs text-muted-foreground'>
+          参加するとサイドバーに追加されます。
+        </p>
+        {join.error && (
+          <p role='alert' className='mt-1 text-xs text-destructive'>
+            {join.error.message}
+          </p>
+        )}
+      </div>
+      <Button size='sm' disabled={join.isPending} onClick={() => join.mutate()}>
+        {join.isPending ? <LoaderCircle className='animate-spin' /> : <Plus />}
+        チャンネルに参加
+      </Button>
+    </div>
+  );
+};
 
 const Timeline = ({
   view,

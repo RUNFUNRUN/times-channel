@@ -251,6 +251,10 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
   expect(joinNotice).toHaveLength(1);
   expect(joinNotice[0].body).toContain(`/channels/${secondChannel.id}`);
   expect(joinNotice[0].body).toContain('ワークスペースに参加しました');
+  const joinChannel = (channelId: string, actor = 0) =>
+    request(`/channels/${channelId}/join`, { method: 'PUT', actor });
+  expect((await joinChannel(secondChannel.id, 99)).status).toBe(401);
+  expect((await joinChannel('unknown-channel')).status).toBe(404);
   const sidebar = [
     { channelId: secondChannel.id, visible: true },
     { channelId: ownChannel.id, visible: true },
@@ -260,10 +264,14 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
     (
       await request('/channels/sidebar', {
         method: 'PUT',
-        body: { channels: sidebar },
+        body: {
+          channels: [{ ...sidebar[0], visible: false }, ...sidebar.slice(1)],
+        },
       })
     ).status,
   ).toBe(200);
+  expect((await joinChannel(secondChannel.id)).status).toBe(200);
+  expect((await joinChannel(secondChannel.id)).status).toBe(200);
   const preferences = (await (
     await request('/workspace')
   ).json()) as typeof workspace;
@@ -283,6 +291,17 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
     unaffected.channels.find((item) => item.id === ownChannel.id)
       ?.sidebarVisible,
   ).toBe(false);
+  expect((await joinChannel(ownChannel.id, 1)).status).toBe(200);
+  expect((await joinChannel('general', 1)).status).toBe(200);
+  const joined = (await (
+    await request('/workspace', { actor: 1 })
+  ).json()) as typeof workspace;
+  expect(
+    joined.channels.slice(0, 2).map((item) => [item.id, item.sidebarVisible]),
+  ).toEqual([
+    [ownChannel.id, true],
+    ['general', true],
+  ]);
   expect((secondChannel?.name.length ?? 0) <= 64).toBe(true);
   const ownPostResult = await request('/messages', {
     method: 'POST',
