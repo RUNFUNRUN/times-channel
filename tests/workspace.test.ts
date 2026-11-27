@@ -17,7 +17,11 @@ if (
   throw new Error('Integration tests may only run against a local preview.');
 }
 const runId = crypto.randomUUID();
-const emails = [`qa-${runId}@example.test`, `qa-${runId}@other.example.test`];
+const emails = [
+  `qa-${runId}@example.test`,
+  `qa-${runId}@other.example.test`,
+  `qa-add-${runId}@example.test`,
+];
 const channelName = `qa-${runId}`;
 const mentionFixtureIds = Array.from(
   { length: 60 },
@@ -418,6 +422,52 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
   });
   expect(created.status).toBe(201);
   const { channel } = (await created.json()) as { channel: { id: string } };
+  const extraSignup = await signUp(emails[2], 2);
+  expect(extraSignup.status).toBe(200);
+  cookies.push(sessionCookie(extraSignup));
+  const thirdWorkspace = (await (
+    await request('/workspace', { actor: 2 })
+  ).json()) as typeof workspace;
+  const candidatesPath = `/channels/${channel.id}/member-candidates`;
+  const recruit = (userIds: string[], actor = 0) =>
+    request(`/channels/${channel.id}/members`, {
+      method: 'POST',
+      actor,
+      body: { userIds },
+    });
+  const candidateIds = async () => {
+    const response = await request(candidatesPath);
+    expect(response.status).toBe(200);
+    return (
+      (await response.json()) as { members: { id: string }[] }
+    ).members.map((member) => member.id);
+  };
+  expect((await request(candidatesPath, { actor: 99 })).status).toBe(401);
+  expect((await recruit([second.user.id], 99)).status).toBe(401);
+  expect(await candidateIds()).toEqual(
+    expect.arrayContaining([second.user.id, thirdWorkspace.user.id]),
+  );
+  expect((await recruit([second.user.id, 'missing-member'])).status).toBe(409);
+  expect(await candidateIds()).toContain(second.user.id);
+  expect((await recruit([second.user.id, second.user.id])).status).toBe(400);
+  const recruited = await recruit([second.user.id, thirdWorkspace.user.id]);
+  expect(recruited.status).toBe(200);
+  expect(await recruited.json()).toEqual({ count: 2 });
+  const remainingCandidates = await candidateIds();
+  expect(remainingCandidates).not.toContain(second.user.id);
+  expect(remainingCandidates).not.toContain(thirdWorkspace.user.id);
+  expect(remainingCandidates).not.toContain(workspace.user.id);
+  for (const actor of [1, 2]) {
+    const updated = (await (
+      await request('/workspace', { actor })
+    ).json()) as typeof workspace;
+    expect(
+      updated.channels.find((item) => item.id === channel.id)?.sidebarVisible,
+    ).toBe(true);
+    expect(
+      updated.channels.find((item) => item.id === 'general')?.sidebarVisible,
+    ).toBe(true);
+  }
   expect(
     (
       await request('/channels', {

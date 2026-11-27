@@ -13,6 +13,7 @@ import {
 } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { cleanupUploads } from '@/app/api/_lib/attachments';
+import { defaultSidebarVisibility } from '@/app/api/_lib/channel-sidebar';
 import { isChannelTimelinePost } from '@/app/api/_lib/channel-timeline';
 import { ensureMemberChannels } from '@/app/api/_lib/member-channels';
 import type { ApiEnv } from '@/app/api/_lib/types';
@@ -113,9 +114,11 @@ export const workspaceRoutes = new Hono<ApiEnv>().get('/', async (c) => {
         ...item,
         sidebarVisible:
           order.get(item.id)?.visible ??
-          (item.id === 'general' ||
-            item.ownerId === me.id ||
-            (!newMember && !hiddenByDefault)),
+          defaultSidebarVisibility(
+            { ...item, hiddenByDefault },
+            me.id,
+            newMember,
+          ),
         starred: Boolean(item.starred),
         unread: Boolean(item.unread),
       })),

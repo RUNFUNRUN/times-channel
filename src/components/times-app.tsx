@@ -784,6 +784,7 @@ const WorkspaceApp = () => {
         {membersOpen && (
           <MemberDirectoryDialog
             userId={data.user.id}
+            channel={currentChannel}
             onOpenChange={setMembersOpen}
           />
         )}

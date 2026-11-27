@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { InferResponseType } from 'hono/client';
 import { Copy, UserPlus } from 'lucide-react';
 import { useState } from 'react';
+import { ChannelMemberAdder } from '@/components/channel-member-adder';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -23,7 +24,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { UserAvatar } from '@/components/user-avatar';
-import { client, readResponse } from '@/lib/api-client';
+import { type Channel, client, readResponse } from '@/lib/api-client';
 
 type Directory = InferResponseType<
   typeof client.api.members.directory.$get,
@@ -36,13 +37,15 @@ type Invitation = InferResponseType<
 
 export const MemberDirectoryDialog = ({
   userId,
+  channel,
   onOpenChange,
 }: {
   userId: string;
+  channel?: Pick<Channel, 'id' | 'name'>;
   onOpenChange: (open: boolean) => void;
 }) => {
   const queryClient = useQueryClient();
-  const [inviteOpen, setInviteOpen] = useState(false);
+  const [addition, setAddition] = useState<'channel' | 'invite' | null>(null);
   const [inviteUrl, setInviteUrl] = useState('');
   const [copyStatus, setCopyStatus] = useState('');
   const [disableTarget, setDisableTarget] =
@@ -92,14 +95,33 @@ export const MemberDirectoryDialog = ({
             メンバーの招待と利用状況を管理できます。
           </DialogDescription>
         </DialogHeader>
-        <Button
-          variant='outline'
-          className='w-fit'
-          onClick={() => setInviteOpen((value) => !value)}
-        >
-          <UserPlus /> メンバーを追加
-        </Button>
-        {inviteOpen && (
+        <div className='flex flex-wrap gap-2'>
+          {channel && (
+            <Button
+              variant='outline'
+              aria-expanded={addition === 'channel'}
+              onClick={() =>
+                setAddition((value) => (value === 'channel' ? null : 'channel'))
+              }
+            >
+              <UserPlus /> チャンネルにメンバーを追加
+            </Button>
+          )}
+          <Button
+            variant='outline'
+            aria-expanded={addition === 'invite'}
+            onClick={() =>
+              setAddition((value) => (value === 'invite' ? null : 'invite'))
+            }
+          >
+            {!channel && <UserPlus />}
+            {channel ? 'ワークスペースに招待' : 'メンバーを追加'}
+          </Button>
+        </div>
+        {channel && addition === 'channel' && (
+          <ChannelMemberAdder key={channel.id} channel={channel} />
+        )}
+        {addition === 'invite' && (
           <section className='space-y-3 rounded-lg border p-3'>
             <form
               className='space-y-2'

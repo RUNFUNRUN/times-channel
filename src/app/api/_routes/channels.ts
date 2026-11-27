@@ -1,17 +1,24 @@
 import { zValidator } from '@hono/zod-validator';
-import { and, eq, ne, notExists, sql } from 'drizzle-orm';
+import { and, asc, count, eq, ne, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
+import {
+  defaultSidebarVisibility,
+  getSidebarChannel,
+  sidebarJoin,
+} from '@/app/api/_lib/channel-sidebar';
 import { isChannelTimelinePost } from '@/app/api/_lib/channel-timeline';
 import type { ApiEnv } from '@/app/api/_lib/types';
+import { CHANNEL_MEMBER_BATCH_LIMIT } from '@/lib/constants';
 import {
   channel,
   channelRead,
   favorite,
   message,
   sidebarPreference,
+  user,
 } from '@/lib/schema';
 
 const channelFields = {
@@ -139,30 +146,96 @@ export const channelsRoutes = new Hono<ApiEnv>()
   .put('/:id/join', async (c) => {
     const db = c.var.db;
     const channelId = c.req.param('id');
-    const [target] = await db
-      .select({ id: channel.id })
-      .from(channel)
-      .where(eq(channel.id, channelId));
-    if (!target)
-      throw new HTTPException(404, { message: 'チャンネルが見つかりません。' });
-    const entry = { channelId, visible: true };
-    // Update an existing entry in place or append it without touching other preferences.
-    const slot = sql`coalesce((
-      select '$[' || key || ']'
-      from json_each(${sidebarPreference.channels})
-      where json_extract(value, '$.channelId') = ${channelId}
-    ), '$[#]')`;
+    await getSidebarChannel(db, channelId);
+    const { entry, update } = sidebarJoin(channelId);
     await db
       .insert(sidebarPreference)
       .values({ userId: c.var.user.id, channels: [entry] })
       .onConflictDoUpdate({
         target: sidebarPreference.userId,
-        set: {
-          channels: sql`json_set(${sidebarPreference.channels}, ${slot}, json(${JSON.stringify(entry)}))`,
-        },
+        set: { channels: update },
       });
     return c.json({ ok: true });
   })
+  .get('/:id/member-candidates', async (c) => {
+    const db = c.var.db;
+    const target = await getSidebarChannel(db, c.req.param('id'));
+    const personal = alias(channel, 'personal');
+    const rows = await db
+      .select({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        image: user.image,
+        newMember: personal.hiddenByDefault,
+        preferences: sidebarPreference.channels,
+      })
+      .from(user)
+      .leftJoin(personal, eq(personal.ownerId, user.id))
+      .leftJoin(sidebarPreference, eq(sidebarPreference.userId, user.id))
+      .where(and(eq(user.disabled, false), ne(user.id, c.var.user.id)))
+      .orderBy(asc(user.name), asc(user.email));
+    return c.json({
+      members: rows.flatMap(({ preferences, newMember, ...member }) => {
+        const visible =
+          preferences?.find((item) => item.channelId === target.id)?.visible ??
+          defaultSidebarVisibility(target, member.id, Boolean(newMember));
+        return visible ? [] : [member];
+      }),
+    });
+  })
+  .post(
+    '/:id/members',
+    zValidator(
+      'json',
+      z.object({
+        userIds: z
+          .array(z.string().min(1).max(128))
+          .min(1)
+          .max(CHANNEL_MEMBER_BATCH_LIMIT)
+          .refine((ids) => new Set(ids).size === ids.length),
+      }),
+    ),
+    async (c) => {
+      const db = c.var.db;
+      const channelId = c.req.param('id');
+      await getSidebarChannel(db, channelId);
+      const { userIds } = c.req.valid('json');
+      const eligible = and(
+        eq(user.disabled, false),
+        ne(user.id, c.var.user.id),
+        sql`${user.id} in (select value from json_each(${JSON.stringify(userIds)}))`,
+      );
+      const eligibleCount = db
+        .select({ count: count() })
+        .from(user)
+        .where(eligible);
+      const { entry, update } = sidebarJoin(channelId);
+      // A single write keeps the entire selection unchanged if a member becomes unavailable.
+      const added = await db
+        .insert(sidebarPreference)
+        .select(
+          db
+            .select({
+              userId: user.id,
+              channels: sql`json(${JSON.stringify([entry])})`.as('channels'),
+            })
+            .from(user)
+            .where(and(eligible, sql`(${eligibleCount}) = ${userIds.length}`)),
+        )
+        .onConflictDoUpdate({
+          target: sidebarPreference.userId,
+          set: { channels: update },
+        })
+        .returning({ id: sidebarPreference.userId });
+      if (!added.length)
+        throw new HTTPException(409, {
+          message:
+            '追加できないメンバーが含まれています。候補を更新してください。',
+        });
+      return c.json({ count: added.length });
+    },
+  )
   .put(
     '/:id/read',
     zValidator('json', z.object({ messageId: z.string().min(1).max(128) })),
