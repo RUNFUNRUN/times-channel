@@ -14,9 +14,16 @@ import {
 import { Hono } from 'hono';
 import { cleanupUploads } from '@/app/api/_lib/attachments';
 import { isChannelTimelinePost } from '@/app/api/_lib/channel-timeline';
-import { publishChange } from '@/app/api/_lib/realtime';
+import { ensureMemberChannels } from '@/app/api/_lib/member-channels';
 import type { ApiEnv } from '@/app/api/_lib/types';
-import { channel, channelRead, favorite, message, user } from '@/lib/schema';
+import {
+  channel,
+  channelRead,
+  favorite,
+  message,
+  sidebarPreference,
+  user,
+} from '@/lib/schema';
 
 export const workspaceRoutes = new Hono<ApiEnv>().get('/', async (c) => {
   const db = c.var.db;
@@ -27,60 +34,24 @@ export const workspaceRoutes = new Hono<ApiEnv>().get('/', async (c) => {
       console.error('R2 cleanup will retry', error),
     ),
   );
-  const slug =
-    me.email
-      .split('@')[0]
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, '-')
-      .slice(0, 30) || 'member';
-  const [generalCreated, personalCreated] = await db.batch([
-    db
-      .insert(channel)
-      .values({
-        id: 'general',
-        name: 'general',
-        description: '全員が利用する共有チャンネル',
-        createdAt: Date.now(),
-      })
-      .onConflictDoNothing()
-      .returning({ id: channel.id }),
-    db
-      .insert(channel)
-      .values({
-        id: `times-${me.id}`,
-        name: `times-${slug}`,
-        description: `${me.name} の times チャンネル`,
-        ownerId: me.id,
-        createdAt: Date.now(),
-      })
-      .onConflictDoNothing()
-      .returning({ id: channel.id }),
-  ]);
-  const [ownChannel] = await db
-    .select({ id: channel.id })
-    .from(channel)
-    .where(eq(channel.ownerId, me.id));
-  // Different email domains can have the same local part. Keep ordinary names short.
-  if (!ownChannel) {
-    await db
-      .insert(channel)
-      .values({
-        id: `times-${me.id}`,
-        name: `times-${slug.slice(0, 21)}-${crypto.randomUUID()}`,
-        description: `${me.name} の times チャンネル`,
-        ownerId: me.id,
-        createdAt: Date.now(),
-      })
-      .onConflictDoNothing();
-  }
-  if (generalCreated.length || personalCreated.length || !ownChannel)
-    publishChange('workspace');
+  await ensureMemberChannels(db, me);
+  const [preference] = await db
+    .select()
+    .from(sidebarPreference)
+    .where(eq(sidebarPreference.userId, me.id));
+  const order = new Map(
+    preference?.channels.map((item, index) => [
+      item.channelId,
+      { ...item, index },
+    ]),
+  );
   const channels = await db
     .select({
       id: channel.id,
       name: channel.name,
       description: channel.description,
       ownerId: channel.ownerId,
+      hiddenByDefault: channel.hiddenByDefault,
       unread: exists(
         db
           .select({ id: message.id })
@@ -116,14 +87,38 @@ export const workspaceRoutes = new Hono<ApiEnv>().get('/', async (c) => {
       and(eq(channelRead.channelId, channel.id), eq(channelRead.userId, me.id)),
     )
     .orderBy(asc(channel.createdAt));
-  const [members] = await db.select({ count: count() }).from(user);
+  // Personal channels created for new members carry the onboarding flag.
+  const newMember = channels.some(
+    (item) => item.ownerId === me.id && item.hiddenByDefault,
+  );
+  const [members] = await db
+    .select({ count: count() })
+    .from(user)
+    .where(eq(user.disabled, false));
   return c.json({
     user: me,
-    channels: channels.map((item) => ({
-      ...item,
-      starred: Boolean(item.starred),
-      unread: Boolean(item.unread),
-    })),
+    channels: channels
+      .sort((a, b) => {
+        const aOrder = order.get(a.id)?.index ?? Infinity;
+        const bOrder = order.get(b.id)?.index ?? Infinity;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        if (a.ownerId && b.ownerId)
+          return (
+            Number(b.ownerId === me.id) - Number(a.ownerId === me.id) ||
+            a.name.localeCompare(b.name)
+          );
+        return Number(Boolean(a.ownerId)) - Number(Boolean(b.ownerId));
+      })
+      .map(({ hiddenByDefault, ...item }) => ({
+        ...item,
+        sidebarVisible:
+          order.get(item.id)?.visible ??
+          (item.id === 'general' ||
+            item.ownerId === me.id ||
+            (!newMember && !hiddenByDefault)),
+        starred: Boolean(item.starred),
+        unread: Boolean(item.unread),
+      })),
     memberCount: members.count,
   });
 });

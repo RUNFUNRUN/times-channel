@@ -57,6 +57,13 @@
       "when": 1795766336160,
       "tag": "0007_channel_reads",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1795767351987,
+      "tag": "0008_workspace_members_and_sidebar",
+      "breakpoints": true
     }
   ]
 }

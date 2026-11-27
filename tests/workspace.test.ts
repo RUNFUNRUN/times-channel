@@ -58,6 +58,7 @@ const request = (
     body?: unknown;
     actor?: number;
     origin?: string;
+    invite?: string;
   } = {},
 ) =>
   fetch(`${baseURL}/api${path}`, {
@@ -66,6 +67,7 @@ const request = (
       'Content-Type': 'application/json',
       Origin: options.origin ?? baseURL,
       Cookie: cookies[options.actor ?? 0] ?? '',
+      ...(options.invite ? { 'x-times-invite': options.invite } : {}),
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
@@ -110,7 +112,7 @@ afterAll(async () => {
   // Remove only this run's fixtures from Wrangler's default local D1 state.
   // No remote option is accepted here or in TEST_BASE_URL.
   const emailList = emails.map((email) => `'${email}'`).join(',');
-  const cleanup = `INSERT OR IGNORE INTO file_cleanup (object_key) SELECT attachment.object_key FROM attachment JOIN message ON attachment.message_id = message.id JOIN channel ON message.channel_id = channel.id WHERE channel.name = '${channelName}' OR message.user_id IN (SELECT id FROM user WHERE email IN (${emailList})); INSERT OR IGNORE INTO file_cleanup (object_key) SELECT 'avatars/' || substr(image, 21) FROM user WHERE email IN (${emailList}) AND image LIKE '/api/profile/avatar/%'; DELETE FROM channel WHERE name = '${channelName}' OR owner_id IN (SELECT id FROM user WHERE email IN (${emailList})); DELETE FROM user WHERE email IN (${emailList}) OR id IN (${mentionFixtureIds.map((id) => `'${id}'`).join(',')});`;
+  const cleanup = `DELETE FROM member_invite WHERE email IN (${emailList}); INSERT OR IGNORE INTO file_cleanup (object_key) SELECT attachment.object_key FROM attachment JOIN message ON attachment.message_id = message.id JOIN channel ON message.channel_id = channel.id WHERE channel.name = '${channelName}' OR message.user_id IN (SELECT id FROM user WHERE email IN (${emailList})); INSERT OR IGNORE INTO file_cleanup (object_key) SELECT 'avatars/' || substr(image, 21) FROM user WHERE email IN (${emailList}) AND image LIKE '/api/profile/avatar/%'; DELETE FROM channel WHERE name = '${channelName}' OR owner_id IN (SELECT id FROM user WHERE email IN (${emailList})); DELETE FROM user WHERE email IN (${emailList}) OR id IN (${mentionFixtureIds.map((id) => `'${id}'`).join(',')});`;
   execFileSync(
     'bunx',
     ['wrangler', 'd1', 'execute', 'DB', '--local', '--command', cleanup],
@@ -134,20 +136,59 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
     expect((await fetch(`${baseURL}${path}`)).status).toBe(200);
   }
 
-  for (const [index, email] of emails.entries()) {
-    const result = await request('/auth/sign-up/email', {
+  expect((await request('/members/directory', { actor: 99 })).status).toBe(401);
+  expect(
+    (
+      await request('/members/invitations', {
+        method: 'POST',
+        actor: 99,
+        body: { email: emails[1] },
+      })
+    ).status,
+  ).toBe(401);
+
+  const signUp = (email: string, index: number, invite?: string) =>
+    request('/auth/sign-up/email', {
       method: 'POST',
       actor: index,
+      invite,
       body: { email, name: `QA ${index}`, password: `test-only-${runId}` },
     });
-    expect(result.status).toBe(200);
-    const cookie = result.headers
+  const sessionCookie = (response: Response) =>
+    response.headers
       .getSetCookie()
       .map((value) => value.split(';')[0])
       .join('; ');
-    expect(cookie).toContain('session_token');
-    cookies.push(cookie);
-  }
+  const firstSignup = await signUp(emails[0], 0);
+  expect(firstSignup.status).toBe(200);
+  cookies.push(sessionCookie(firstSignup));
+  expect(cookies[0]).toContain('session_token');
+  const invitation = await request('/members/invitations', {
+    method: 'POST',
+    body: { email: emails[1].toUpperCase() },
+  });
+  expect(invitation.status).toBe(201);
+  const { token } = (await invitation.json()) as { token: string };
+  expect(
+    await (await request(`/auth/invitations/${token}`, { actor: 99 })).json(),
+  ).toEqual({ email: emails[1] });
+  expect((await signUp(emails[0], 1, token)).status).toBe(404);
+  const invitedSignup = await signUp(emails[1], 1, token);
+  expect(invitedSignup.status).toBe(200);
+  cookies.push(sessionCookie(invitedSignup));
+  expect(cookies[1]).toContain('session_token');
+  expect(
+    (await request(`/auth/invitations/${token}`, { actor: 99 })).status,
+  ).toBe(404);
+  expect((await signUp(emails[1], 1, token)).status).toBe(404);
+  expect(
+    (
+      await request('/members/invitations', {
+        method: 'POST',
+        body: { email: emails[1] },
+      })
+    ).status,
+  ).toBe(409);
   const workspace = (await (await request('/workspace')).json()) as {
     user: { id: string };
     channels: {
@@ -156,6 +197,7 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
       name: string;
       starred: boolean;
       unread: boolean;
+      sidebarVisible: boolean;
       description: string;
     }[];
   };
@@ -179,7 +221,68 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
     again.channels.filter((channel) => channel.ownerId === workspace.user.id),
   ).toHaveLength(1);
 
-  if (!ownChannel) throw new Error('Personal channel missing');
+  if (!ownChannel || !secondChannel)
+    throw new Error('Personal channel missing');
+  expect(ownChannel.sidebarVisible).toBe(true);
+  expect(secondChannel.sidebarVisible).toBe(true);
+  expect(
+    workspace.channels
+      .filter((item) => item.sidebarVisible)
+      .map((item) => item.id),
+  ).toEqual(['general', ownChannel.id]);
+  expect(
+    second.channels
+      .filter((item) => item.sidebarVisible)
+      .map((item) => item.id),
+  ).toEqual(['general', secondChannel.id]);
+  expect(
+    workspace.channels.find((item) => item.id === secondChannel.id)
+      ?.sidebarVisible,
+  ).toBe(false);
+  expect(
+    second.channels.find((item) => item.id === ownChannel.id)?.sidebarVisible,
+  ).toBe(false);
+  const general = (await (
+    await request('/messages?channelId=general')
+  ).json()) as Page;
+  const joinNotice = general.messages.filter(
+    (item) => item.userId === second.user.id,
+  );
+  expect(joinNotice).toHaveLength(1);
+  expect(joinNotice[0].body).toContain(`/channels/${secondChannel.id}`);
+  expect(joinNotice[0].body).toContain('ワークスペースに参加しました');
+  const sidebar = [
+    { channelId: secondChannel.id, visible: true },
+    { channelId: ownChannel.id, visible: true },
+    { channelId: 'general', visible: false },
+  ];
+  expect(
+    (
+      await request('/channels/sidebar', {
+        method: 'PUT',
+        body: { channels: sidebar },
+      })
+    ).status,
+  ).toBe(200);
+  const preferences = (await (
+    await request('/workspace')
+  ).json()) as typeof workspace;
+  expect(
+    preferences.channels
+      .slice(0, 3)
+      .map((item) => [item.id, item.sidebarVisible]),
+  ).toEqual(sidebar.map((item) => [item.channelId, item.visible]));
+  expect((await request('/messages?channelId=general')).status).toBe(200);
+  const unaffected = (await (
+    await request('/workspace', { actor: 1 })
+  ).json()) as typeof workspace;
+  expect(
+    unaffected.channels.find((item) => item.id === 'general')?.sidebarVisible,
+  ).toBe(true);
+  expect(
+    unaffected.channels.find((item) => item.id === ownChannel.id)
+      ?.sidebarVisible,
+  ).toBe(false);
   expect((secondChannel?.name.length ?? 0) <= 64).toBe(true);
   const ownPostResult = await request('/messages', {
     method: 'POST',
@@ -1588,4 +1691,45 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
     body: { email: emails[0], password: `test-only-${runId}` },
   });
   expect(signedIn.status).toBe(200);
+  cookies[0] = sessionCookie(signedIn);
+  const setDisabled = (id: string, disabled: boolean) =>
+    request(`/members/${id}/status`, { method: 'PUT', body: { disabled } });
+  expect((await setDisabled(workspace.user.id, true)).status).toBe(400);
+  const disabledSocket = waitForSocketClose(socketB);
+  expect((await setDisabled(second.user.id, true)).status).toBe(200);
+  expect(await disabledSocket).toBe(4001);
+  expect((await request('/workspace', { actor: 1 })).status).toBe(401);
+  const disabledLogin = await request('/auth/sign-in/email', {
+    method: 'POST',
+    actor: 1,
+    body: { email: emails[1], password: `test-only-${runId}` },
+  });
+  expect(disabledLogin.status).toBe(403);
+  expect((await disabledLogin.json()) as { code: string }).toMatchObject({
+    code: 'MEMBER_DISABLED',
+  });
+  const directory = (await (await request('/members/directory')).json()) as {
+    members: { id: string; disabled: boolean }[];
+  };
+  expect(
+    directory.members.find((item) => item.id === second.user.id)?.disabled,
+  ).toBe(true);
+  const activeMembers = (await (await request('/members')).json()) as {
+    members: { id: string }[];
+  };
+  expect(activeMembers.members.some((item) => item.id === second.user.id)).toBe(
+    false,
+  );
+  expect((await request(`/messages/${joinNotice[0].id}/thread`)).status).toBe(
+    200,
+  );
+  expect((await setDisabled(second.user.id, false)).status).toBe(200);
+  expect((await request('/workspace', { actor: 1 })).status).toBe(401);
+  const restored = await request('/auth/sign-in/email', {
+    method: 'POST',
+    actor: 1,
+    body: { email: emails[1], password: `test-only-${runId}` },
+  });
+  expect(restored.status).toBe(200);
+  cookies[1] = sessionCookie(restored);
 }, 120000);

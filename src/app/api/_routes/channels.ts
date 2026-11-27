@@ -6,7 +6,13 @@ import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { isChannelTimelinePost } from '@/app/api/_lib/channel-timeline';
 import type { ApiEnv } from '@/app/api/_lib/types';
-import { channel, channelRead, favorite, message } from '@/lib/schema';
+import {
+  channel,
+  channelRead,
+  favorite,
+  message,
+  sidebarPreference,
+} from '@/lib/schema';
 
 const channelFields = {
   name: z
@@ -96,6 +102,38 @@ export const channelsRoutes = new Hono<ApiEnv>()
       if (!changed)
         return c.json({ error: 'そのチャンネル名は使われています。' }, 409);
       return c.json({ channel: changed });
+    },
+  )
+  .put(
+    '/sidebar',
+    zValidator(
+      'json',
+      z.object({
+        channels: z
+          .array(
+            z.object({
+              channelId: z.string().min(1).max(128),
+              visible: z.boolean(),
+            }),
+          )
+          .max(5000)
+          .refine(
+            (items) =>
+              new Set(items.map((item) => item.channelId)).size ===
+              items.length,
+          ),
+      }),
+    ),
+    async (c) => {
+      const { channels } = c.req.valid('json');
+      await c.var.db
+        .insert(sidebarPreference)
+        .values({ userId: c.var.user.id, channels })
+        .onConflictDoUpdate({
+          target: sidebarPreference.userId,
+          set: { channels },
+        });
+      return c.json({ ok: true });
     },
   )
   .put(

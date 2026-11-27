@@ -23,7 +23,8 @@ export default {
       const session = await getAuth(env, url.origin).api.getSession({
         headers: request.headers,
       });
-      if (!session) return new Response(null, { status: 401, headers });
+      if (!session || session.user.disabled)
+        return new Response(null, { status: 401, headers });
       return env.REALTIME.getByName(REALTIME_ROOM).fetch(
         'https://realtime.internal/connect',
         {

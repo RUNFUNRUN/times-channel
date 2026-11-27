@@ -25,3 +25,5 @@ export const publishChange = (scope: RealtimeScope, userId?: string) =>
   notify('/publish', { scope, userId });
 export const disconnectSession = (sessionId: string) =>
   notify('/disconnect', { sessionId });
+export const disconnectMember = (userId: string) =>
+  notify('/disconnect', { userId });

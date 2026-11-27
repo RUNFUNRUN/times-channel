@@ -65,8 +65,13 @@ export class WorkspaceRealtime extends DurableObject<CloudflareEnv> {
       return new Response(null, { status: 204 });
     }
     if (path === '/disconnect' && request.method === 'POST') {
-      const { sessionId } = await request.json<{ sessionId: string }>();
-      for (const socket of this.ctx.getWebSockets(`session:${sessionId}`))
+      const { sessionId, userId } = await request.json<{
+        sessionId?: string;
+        userId?: string;
+      }>();
+      if (!sessionId && !userId) return new Response(null, { status: 400 });
+      const tag = userId ? `user:${userId}` : `session:${sessionId}`;
+      for (const socket of this.ctx.getWebSockets(tag))
         socket.close(4001, 'Session ended');
       return new Response(null, { status: 204 });
     }

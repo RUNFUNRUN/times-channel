@@ -19,6 +19,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Settings2,
   Sparkles,
   Star,
   Users,
@@ -40,8 +41,10 @@ import {
 } from 'react';
 import { AppearanceDialog } from '@/components/appearance-dialog';
 import { AuthScreen } from '@/components/auth-screen';
+import { ChannelSidebarDialog } from '@/components/channel-sidebar-dialog';
 import { Composer } from '@/components/composer';
 import { EditChannelDialog } from '@/components/edit-channel-dialog';
+import { MemberDirectoryDialog } from '@/components/member-directory-dialog';
 import { MessageItem } from '@/components/message-item';
 import { NotificationsPanel } from '@/components/notifications-panel';
 import { ProfileDialog } from '@/components/profile-dialog';
@@ -64,11 +67,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
 import {
   Sheet,
   SheetContent,
@@ -126,9 +124,10 @@ const Loading = () => (
 export const TimesApp = ({ children }: { children: ReactNode }) => {
   const session = authClient.useSession();
   const queryClient = useQueryClient();
+  const activeSession = session.data?.user.disabled ? null : session.data;
   useEffect(() => {
-    if (!session.data && !session.isPending) queryClient.clear();
-  }, [session.data, session.isPending, queryClient]);
+    if (!activeSession && !session.isPending) queryClient.clear();
+  }, [activeSession, session.isPending, queryClient]);
   if (session.isPending) return <Loading />;
   if (session.error)
     return (
@@ -145,9 +144,9 @@ export const TimesApp = ({ children }: { children: ReactNode }) => {
         />
       </main>
     );
-  return session.data ? (
+  return activeSession ? (
     <>
-      <WorkspaceApp key={session.data.user.id} />
+      <WorkspaceApp key={activeSession.user.id} />
       {children}
     </>
   ) : (
@@ -199,6 +198,8 @@ const WorkspaceApp = () => {
   const unreadCount = notifications.data?.unreadCount ?? 0;
   const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [channelSettingsOpen, setChannelSettingsOpen] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -321,6 +322,13 @@ const WorkspaceApp = () => {
       )}
     </Link>
   );
+  const visibleChannels = data.channels.filter((item) => item.sidebarVisible);
+  const starredChannels = visibleChannels.filter((item) => item.starred);
+  const personalChannels = visibleChannels.filter((item) => item.ownerId);
+  const openChannelSettings = () => {
+    setSidebarOpen(false);
+    setChannelSettingsOpen(true);
+  };
   const _sidebar = (
     <div className='sidebar-inner'>
       <div className='workspace-heading'>
@@ -367,13 +375,13 @@ const WorkspaceApp = () => {
             後で読む
           </Link>
         </nav>
-        {data.channels.some((item) => item.starred) && (
+        {starredChannels.length > 0 && (
           <section className='sidebar-section'>
             <div className='sidebar-label'>
               <Star className='size-3.5' />
               スター付き
             </div>
-            {data.channels.filter((item) => item.starred).map(channelButton)}
+            {starredChannels.map(channelButton)}
           </section>
         )}
         <section className='sidebar-section'>
@@ -390,11 +398,11 @@ const WorkspaceApp = () => {
               <Plus />
             </Button>
           </div>
-          {data.channels.filter((item) => !item.ownerId).map(channelButton)}
+          {visibleChannels.filter((item) => !item.ownerId).map(channelButton)}
           <button
             type='button'
             className='channel-link text-white/45!'
-            onClick={() => setCreateOpen(true)}
+            onClick={openChannelSettings}
           >
             <Plus className='size-4' />
             チャンネルを追加
@@ -404,19 +412,17 @@ const WorkspaceApp = () => {
           <div className='sidebar-label'>
             <ChevronDown className='size-3.5' />
             みんなの times
-            <span className='ml-auto text-xs text-white/35'>
-              {data.channels.filter((item) => item.ownerId).length}
-            </span>
+            <Button
+              size='icon-xs'
+              variant='ghost'
+              className='ml-auto text-white/60 hover:bg-white/10 hover:text-white'
+              aria-label='チャンネルの表示設定'
+              onClick={openChannelSettings}
+            >
+              <Settings2 />
+            </Button>
           </div>
-          {data.channels
-            .filter((item) => item.ownerId)
-            .sort(
-              (a, b) =>
-                Number(b.ownerId === data.user.id) -
-                  Number(a.ownerId === data.user.id) ||
-                a.name.localeCompare(b.name),
-            )
-            .map(channelButton)}
+          {personalChannels.map(channelButton)}
         </section>
       </div>
       <DropdownMenu>
@@ -648,30 +654,15 @@ const WorkspaceApp = () => {
                   />
                 </Button>
               )}
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant='ghost'
-                    className='member-button gap-1.5'
-                    aria-label='ワークスペースの情報'
-                  >
-                    <Users className='size-4' />
-                    <span>{data.memberCount}</span>
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent align='end' className='space-y-3 text-sm'>
-                  <h3 className='font-bold'>みんなの times</h3>
-                  <p className='leading-6 text-muted-foreground'>
-                    {data.memberCount}{' '}
-                    人のメンバーが登録しています。すべてのチャンネルは、ワークスペースの全員に公開されます。
-                  </p>
-                  <p className='text-xs text-muted-foreground'>
-                    {connected
-                      ? 'リアルタイムで更新しています。'
-                      : '約10秒ごとに更新しています。'}
-                  </p>
-                </PopoverContent>
-              </Popover>
+              <Button
+                variant='ghost'
+                className='member-button gap-1.5'
+                aria-label={`参加者一覧・${data.memberCount}人`}
+                onClick={() => setMembersOpen(true)}
+              >
+                <Users className='size-4' />
+                <span>{data.memberCount}</span>
+              </Button>
             </header>
             <div className='channel-tabs'>
               <span className='channel-tab'>
@@ -777,6 +768,18 @@ const WorkspaceApp = () => {
         </div>
         {profileOpen && (
           <ProfileDialog user={data.user} onOpenChange={setProfileOpen} />
+        )}
+        {channelSettingsOpen && (
+          <ChannelSidebarDialog
+            channels={data.channels}
+            onOpenChange={setChannelSettingsOpen}
+          />
+        )}
+        {membersOpen && (
+          <MemberDirectoryDialog
+            userId={data.user.id}
+            onOpenChange={setMembersOpen}
+          />
         )}
         <CreateChannelDialog
           open={createOpen}

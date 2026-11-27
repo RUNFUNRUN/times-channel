@@ -18,7 +18,8 @@ export const requireSession = createMiddleware<ApiEnv>(async (c, next) => {
   const session = await getAuth(env, new URL(c.req.url).origin).api.getSession({
     headers: c.req.raw.headers,
   });
-  if (!session) return c.json({ error: 'ログインしてください。' }, 401);
+  if (!session || session.user.disabled)
+    return c.json({ error: 'ログインしてください。' }, 401);
   c.set('db', getDB(env.DB));
   c.set('user', session.user);
   await next();
@@ -28,10 +29,15 @@ export const requireSession = createMiddleware<ApiEnv>(async (c, next) => {
       path.startsWith('/api/notifications') ||
       path.endsWith('/bookmark') ||
       path.endsWith('/favorite') ||
+      path === '/api/channels/sidebar' ||
       (path.startsWith('/api/channels/') && path.endsWith('/read'))
     )
       publishChange('private', session.user.id);
-    else if (path.startsWith('/api/channels') || path === '/api/profile')
+    else if (
+      path.startsWith('/api/channels') ||
+      path.startsWith('/api/members') ||
+      path === '/api/profile'
+    )
       publishChange('workspace');
     else if (path.startsWith('/api/messages') || path === '/api/uploads')
       publishChange('messages');

@@ -14,6 +14,10 @@ export const user = sqliteTable('user', {
   emailVerified: integer('email_verified', { mode: 'boolean' })
     .notNull()
     .default(false),
+  disabled: integer('disabled', { mode: 'boolean' }).notNull().default(false),
+  joinAnnounced: integer('join_announced', { mode: 'boolean' })
+    .notNull()
+    .default(false),
   image: text('image'),
   createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
@@ -84,6 +88,24 @@ export const channel = sqliteTable('channel', {
     .references(() => user.id, { onDelete: 'set null' }),
   createdAt: integer('created_at').notNull(),
   unreadSince: integer('unread_since').notNull().default(0),
+  hiddenByDefault: integer('hidden_by_default', { mode: 'boolean' })
+    .notNull()
+    .default(false),
+});
+
+export const sidebarPreference = sqliteTable('sidebar_preference', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  channels: text('channels', { mode: 'json' })
+    .$type<{ channelId: string; visible: boolean }[]>()
+    .notNull(),
+});
+
+export const memberInvite = sqliteTable('member_invite', {
+  email: text('email').primaryKey(),
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: integer('expires_at').notNull(),
 });
 
 export const channelRead = sqliteTable(
@@ -261,6 +283,8 @@ export const schema = {
   verification,
   channel,
   channelRead,
+  sidebarPreference,
+  memberInvite,
   message,
   reaction,
   bookmark,
