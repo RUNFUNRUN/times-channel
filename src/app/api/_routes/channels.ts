@@ -1,11 +1,12 @@
 import { zValidator } from '@hono/zod-validator';
-import { and, eq, ne, notExists } from 'drizzle-orm';
+import { and, eq, ne, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
+import { isChannelTimelinePost } from '@/app/api/_lib/channel-timeline';
 import type { ApiEnv } from '@/app/api/_lib/types';
-import { channel, favorite } from '@/lib/schema';
+import { channel, channelRead, favorite, message } from '@/lib/schema';
 
 const channelFields = {
   name: z
@@ -95,6 +96,39 @@ export const channelsRoutes = new Hono<ApiEnv>()
       if (!changed)
         return c.json({ error: 'そのチャンネル名は使われています。' }, 409);
       return c.json({ channel: changed });
+    },
+  )
+  .put(
+    '/:id/read',
+    zValidator('json', z.object({ messageId: z.string().min(1).max(128) })),
+    async (c) => {
+      const db = c.var.db;
+      const channelId = c.req.param('id');
+      const { messageId } = c.req.valid('json');
+      const [target] = await db
+        .select({ id: message.id, createdAt: message.createdAt })
+        .from(message)
+        .where(
+          and(
+            eq(message.id, messageId),
+            eq(message.channelId, channelId),
+            isChannelTimelinePost(),
+          ),
+        );
+      if (!target)
+        throw new HTTPException(404, {
+          message: 'チャンネルの投稿が見つかりません。',
+        });
+      const position = { lastReadAt: target.createdAt, lastReadId: target.id };
+      await db
+        .insert(channelRead)
+        .values({ userId: c.var.user.id, channelId, ...position })
+        .onConflictDoUpdate({
+          target: [channelRead.userId, channelRead.channelId],
+          set: position,
+          setWhere: sql`(${channelRead.lastReadAt}, ${channelRead.lastReadId}) < (${target.createdAt}, ${target.id})`,
+        });
+      return c.json({ ok: true });
     },
   )
   .put(

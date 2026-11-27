@@ -18,6 +18,7 @@ test('realtime protocol ignores malformed and unsupported events', () => {
     scope: 'messages',
   });
   expect(realtimeQueryKeys('messages')).toEqual([
+    'workspace',
     'messages',
     'thread',
     'notifications',

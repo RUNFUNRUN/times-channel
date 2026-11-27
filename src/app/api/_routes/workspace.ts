@@ -1,10 +1,22 @@
 import { getCloudflareContext } from '@opennextjs/cloudflare';
-import { and, asc, count, eq, exists } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  eq,
+  exists,
+  gte,
+  isNull,
+  ne,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { Hono } from 'hono';
 import { cleanupUploads } from '@/app/api/_lib/attachments';
+import { isChannelTimelinePost } from '@/app/api/_lib/channel-timeline';
 import { publishChange } from '@/app/api/_lib/realtime';
 import type { ApiEnv } from '@/app/api/_lib/types';
-import { channel, favorite, user } from '@/lib/schema';
+import { channel, channelRead, favorite, message, user } from '@/lib/schema';
 
 export const workspaceRoutes = new Hono<ApiEnv>().get('/', async (c) => {
   const db = c.var.db;
@@ -69,6 +81,26 @@ export const workspaceRoutes = new Hono<ApiEnv>().get('/', async (c) => {
       name: channel.name,
       description: channel.description,
       ownerId: channel.ownerId,
+      unread: exists(
+        db
+          .select({ id: message.id })
+          .from(message)
+          .where(
+            and(
+              eq(message.channelId, channel.id),
+              ne(message.userId, me.id),
+              isChannelTimelinePost(),
+              gte(
+                message.createdAt,
+                sql<number>`max(${channel.unreadSince}, ${me.createdAt.getTime()}, coalesce(${channelRead.lastReadAt}, 0))`,
+              ),
+              or(
+                isNull(channelRead.lastReadAt),
+                sql`(${message.createdAt}, ${message.id}) > (${channelRead.lastReadAt}, ${channelRead.lastReadId})`,
+              ),
+            ),
+          ),
+      ),
       starred: exists(
         db
           .select()
@@ -79,6 +111,10 @@ export const workspaceRoutes = new Hono<ApiEnv>().get('/', async (c) => {
       ),
     })
     .from(channel)
+    .leftJoin(
+      channelRead,
+      and(eq(channelRead.channelId, channel.id), eq(channelRead.userId, me.id)),
+    )
     .orderBy(asc(channel.createdAt));
   const [members] = await db.select({ count: count() }).from(user);
   return c.json({
@@ -86,6 +122,7 @@ export const workspaceRoutes = new Hono<ApiEnv>().get('/', async (c) => {
     channels: channels.map((item) => ({
       ...item,
       starred: Boolean(item.starred),
+      unread: Boolean(item.unread),
     })),
     memberCount: members.count,
   });

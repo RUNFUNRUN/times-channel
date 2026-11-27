@@ -4,7 +4,7 @@ export const REALTIME_ROOM = 'workspace';
 export const REALTIME_PATH = '/api/realtime';
 export const realtimeQueryKeys = (scope?: RealtimeScope) =>
   scope === 'messages'
-    ? ['messages', 'thread', 'notifications']
+    ? ['workspace', 'messages', 'thread', 'notifications']
     : ['workspace', 'members', 'messages', 'thread', 'notifications'];
 export const parseRealtimeEvent = (data: unknown): RealtimeEvent | null => {
   if (typeof data !== 'string') return null;

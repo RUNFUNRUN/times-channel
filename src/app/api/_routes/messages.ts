@@ -1,16 +1,6 @@
 import { zValidator } from '@hono/zod-validator';
 import { getCloudflareContext } from '@opennextjs/cloudflare';
-import {
-  and,
-  desc,
-  eq,
-  exists,
-  inArray,
-  isNull,
-  lt,
-  or,
-  sql,
-} from 'drizzle-orm';
+import { and, desc, eq, exists, inArray, lt, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
@@ -20,6 +10,7 @@ import {
   getAttachments,
   validateMessageTarget,
 } from '@/app/api/_lib/attachments';
+import { isChannelTimelinePost } from '@/app/api/_lib/channel-timeline';
 import {
   getMessageMentions,
   messageEventWrites,
@@ -104,12 +95,7 @@ export const messagesRoutes = new Hono<ApiEnv>()
         .where(
           and(
             // Search and saved views can also include replies posted only in threads.
-            !q && !saved
-              ? or(
-                  isNull(message.parentId),
-                  eq(message.alsoPostToChannel, true),
-                )
-              : undefined,
+            !q && !saved ? isChannelTimelinePost() : undefined,
             channelId ? eq(message.channelId, channelId) : undefined,
             escaped
               ? or(

@@ -9,6 +9,7 @@ export const useMessageAction = () => {
     mutationFn: async (request: () => Promise<ApiResponse>) =>
       readResponse<unknown>(await request()),
     onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['workspace'] });
       void queryClient.invalidateQueries({ queryKey: ['notifications'] });
       void queryClient.invalidateQueries({ queryKey: ['messages'] });
       void queryClient.invalidateQueries({ queryKey: ['thread'] });

@@ -397,6 +397,10 @@ a:focus-visible {
   background: var(--sidebar-selected);
   font-weight: 550;
 }
+.channel-link.unread {
+  color: white;
+  font-weight: 700;
+}
 
 .sidebar-account {
   display: flex;

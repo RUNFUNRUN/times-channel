@@ -83,7 +83,24 @@ export const channel = sqliteTable('channel', {
     .unique()
     .references(() => user.id, { onDelete: 'set null' }),
   createdAt: integer('created_at').notNull(),
+  unreadSince: integer('unread_since').notNull().default(0),
 });
+
+export const channelRead = sqliteTable(
+  'channel_read',
+  {
+    channelId: text('channel_id')
+      .notNull()
+      .references(() => channel.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    lastReadAt: integer('last_read_at').notNull(),
+    // Keep the position even if the last read post is deleted.
+    lastReadId: text('last_read_id').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.channelId] })],
+);
 
 export const message = sqliteTable(
   'message',
@@ -243,6 +260,7 @@ export const schema = {
   account,
   verification,
   channel,
+  channelRead,
   message,
   reaction,
   bookmark,

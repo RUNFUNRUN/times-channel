@@ -2,6 +2,7 @@
 
 import {
   useInfiniteQuery,
+  useMutation,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
@@ -303,11 +304,16 @@ const WorkspaceApp = () => {
       href={channelPath(item.id)}
       key={item.id}
       title={item.name}
-      className={cn('channel-link', currentChannel?.id === item.id && 'active')}
+      className={cn(
+        'channel-link',
+        currentChannel?.id === item.id && 'active',
+        item.unread && 'unread',
+      )}
       onClick={() => setSidebarOpen(false)}
     >
       <Hash className='size-4 shrink-0 opacity-60' />
       <span className='truncate'>{item.name}</span>
+      {item.unread && <span className='sr-only'>未読</span>}
       {item.ownerId === data.user.id && (
         <span className='ml-auto shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[11px] text-white/65'>
           自分
@@ -728,6 +734,9 @@ const WorkspaceApp = () => {
                 key={JSON.stringify(view)}
                 view={view}
                 user={data.user}
+                trackRead={
+                  Boolean(currentChannel?.unread) && !threadId && !sidebarOpen
+                }
                 onThread={openThread}
                 onChannel={openChannel}
                 onOwnChannel={() => {
@@ -792,12 +801,14 @@ const PencilIcon = () => <Plus className='size-4' />;
 const Timeline = ({
   view,
   user,
+  trackRead,
   onThread,
   onChannel,
   onOwnChannel,
 }: {
   view: View;
   user: Workspace['user'];
+  trackRead: boolean;
   onThread: (id: string) => void;
   onChannel: (id: string) => void;
   onOwnChannel: () => void;
@@ -805,6 +816,7 @@ const Timeline = ({
   const refetchInterval = useRealtimeInterval();
   const isCollection = view.kind === 'saved' || view.kind === 'search';
   const list = useRef<HTMLDivElement>(null);
+  const end = useRef<HTMLDivElement>(null);
   const previousNewest = useRef<string | undefined>(undefined);
   const content = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
@@ -839,6 +851,32 @@ const Timeline = ({
   const rows = messages.data?.pages.flatMap((page) => page.messages) ?? [];
   const ordered = isCollection ? rows : [...rows].reverse();
   const newestId = rows[0]?.id;
+  const channelId = view.kind === 'channel' ? view.id : undefined;
+  const queryClient = useQueryClient();
+  const lastRequestedRead = useRef<string>(undefined);
+  const { mutate: markRead } = useMutation({
+    mutationFn: async ({
+      channelId,
+      messageId,
+    }: {
+      channelId: string;
+      messageId: string;
+    }) =>
+      readResponse(
+        await client.api.channels[':id'].read.$put({
+          param: { id: channelId },
+          json: { messageId },
+        }),
+      ),
+    retry: 1,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['workspace'] });
+    },
+    onError: (_error, { messageId }) => {
+      if (lastRequestedRead.current === messageId)
+        lastRequestedRead.current = undefined;
+    },
+  });
   useEffect(() => {
     if (isCollection || !newestId || previousNewest.current === newestId)
       return;
@@ -849,6 +887,34 @@ const Timeline = ({
     } else if (previousNewest.current) setNewMessages(true);
     previousNewest.current = newestId;
   }, [newestId, isCollection]);
+  useEffect(() => {
+    if (!channelId || !trackRead || !newestId || !list.current || !end.current)
+      return;
+    const visibility = { atEnd: false };
+    const markVisible = () => {
+      if (
+        !visibility.atEnd ||
+        document.visibilityState !== 'visible' ||
+        lastRequestedRead.current === newestId
+      )
+        return;
+      lastRequestedRead.current = newestId;
+      markRead({ channelId, messageId: newestId });
+    };
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        visibility.atEnd = entry.isIntersecting;
+        markVisible();
+      },
+      { root: list.current },
+    );
+    observer.observe(end.current);
+    document.addEventListener('visibilitychange', markVisible);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('visibilitychange', markVisible);
+    };
+  }, [channelId, trackRead, newestId, markRead]);
   const loadOlder = async () => {
     const container = list.current;
     const previousHeight = container?.scrollHeight ?? 0;
@@ -972,6 +1038,7 @@ const Timeline = ({
             </div>
           ))}
           {isCollection && olderButton}
+          {channelId && <div ref={end} className='h-px' aria-hidden='true' />}
         </div>
       </div>
       {newMessages && (

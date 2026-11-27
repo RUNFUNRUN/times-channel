@@ -155,6 +155,7 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
       ownerId: string | null;
       name: string;
       starred: boolean;
+      unread: boolean;
       description: string;
     }[];
   };
@@ -949,6 +950,34 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
   });
   expect(rootResult.status).toBe(201);
   const { message: root } = (await rootResult.json()) as { message: Post };
+  const channelUnread = async (actor = 0) => {
+    const response = await request('/workspace', { actor });
+    expect(response.status).toBe(200);
+    const current = (await response.json()) as typeof workspace;
+    return current.channels.find((item) => item.id === channel.id)?.unread;
+  };
+  const markChannelRead = (
+    messageId: string,
+    actor = 0,
+    channelId = channel.id,
+  ) =>
+    request(`/channels/${channelId}/read`, {
+      method: 'PUT',
+      actor,
+      body: { messageId },
+    });
+  expect(await channelUnread()).toBe(false);
+  expect(await channelUnread(1)).toBe(true);
+  expect((await markChannelRead(root.id, 99)).status).toBe(401);
+  expect((await markChannelRead(root.id, 1, 'general')).status).toBe(404);
+  expect(
+    (
+      await withRealtimeEvent(socketB, 'private', () =>
+        markChannelRead(root.id, 1),
+      )
+    ).response.status,
+  ).toBe(200);
+  expect(await channelUnread(1)).toBe(false);
   expect(
     (
       await request(`/messages/${root.id}`, {
@@ -977,6 +1006,9 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
   });
   expect(replyResult.status).toBe(201);
   const { message: reply } = (await replyResult.json()) as { message: Post };
+  expect(await channelUnread()).toBe(false);
+  expect(await channelUnread(1)).toBe(false);
+  expect((await markChannelRead(reply.id)).status).toBe(404);
   expect(
     (
       await request('/messages', {
@@ -1119,6 +1151,21 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
   expect(
     channelReplyThread.messages.find((item) => item.id === channelReply.id),
   ).toEqual(visibleReply);
+  expect(await channelUnread()).toBe(true);
+  expect(await channelUnread(1)).toBe(false);
+  const unreadNotifications = await (
+    await request('/notifications/unread-count')
+  ).json();
+  // A request for an older page cannot clear a newer reply.
+  expect((await markChannelRead(root.id)).status).toBe(200);
+  expect(await channelUnread()).toBe(true);
+  expect((await markChannelRead(channelReply.id)).status).toBe(200);
+  // A late request from another tab cannot move the stored position backward.
+  expect((await markChannelRead(root.id)).status).toBe(200);
+  expect(await channelUnread()).toBe(false);
+  expect(await (await request('/notifications/unread-count')).json()).toEqual(
+    unreadNotifications,
+  );
 
   // More than a page also exercises ordering for simultaneous timestamps.
   const results = await Promise.all(
@@ -1130,6 +1177,8 @@ test('D1 workspace: authentication, ownership, threads, search, reactions, bookm
     ),
   );
   expect(results.every((result) => result.status === 201)).toBe(true);
+  expect(await channelUnread()).toBe(false);
+  expect(await channelUnread(1)).toBe(true);
   const page1 = (await (
     await request(`/messages?channelId=${channel.id}`)
   ).json()) as Page;
